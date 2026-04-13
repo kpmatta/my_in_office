@@ -1,0 +1,26 @@
+name: InOffice
+options:
+  bundleIdPrefix: com.matta
+targets:
+  InOffice:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    settings:
+      DEVELOPMENT_TEAM: AZ4AF4XBGH
+      CODE_SIGN_STYLE: Automatic
+    sources:
+      - path: App
+      - path: Models
+      - path: Managers
+      - path: Views
+    info:
+      path: Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSLocationWhenInUseUsageDescription: "We need your location to automatically track when you enter the office."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "We need your location to automatically track when you enter the office."
+        UIBackgroundModes:
+          - location
