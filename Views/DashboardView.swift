@@ -17,14 +17,10 @@ enum CardMode {
 
 struct DashboardView: View {
     @Query(sort: \DayRecord.date, order: .reverse) private var records: [DayRecord]
-    
-    // In-Office Goals from Settings
-    @AppStorage("yearlyInOfficeGoal") private var yearlyInOfficeGoal: Int = 200
-    @AppStorage("monthlyInOfficeGoal") private var monthlyInOfficeGoal: Int = 18
-    @AppStorage("weeklyInOfficeGoal") private var weeklyInOfficeGoal: Int = 4
-    
+    @Environment(GoalManager.self) private var goalManager
+
     @State private var selectedTimePeriod: TimePeriod = .week
-    
+
     private let calendar = Calendar.current
     
     var body: some View {
@@ -120,9 +116,9 @@ struct DashboardView: View {
     
     private func getGoal(for period: TimePeriod) -> Int {
         switch period {
-        case .week: return weeklyInOfficeGoal
-        case .month: return monthlyInOfficeGoal
-        case .year: return yearlyInOfficeGoal
+        case .week:  return goalManager.effectiveWeeklyGoal
+        case .month: return goalManager.effectiveMonthlyGoal
+        case .year:  return goalManager.effectiveYearlyGoal
         }
     }
     
@@ -168,10 +164,11 @@ struct DashboardView: View {
             VStack(spacing: 0) {
                 ForEach(Array(monthlyData.enumerated()), id: \.offset) { index, item in
                     let isCurrentMonth = item.month == currentMonth
-                    let progress: Double = monthlyInOfficeGoal > 0
-                        ? min(Double(item.count) / Double(monthlyInOfficeGoal), 1.0)
+                    let monthlyGoal = goalManager.effectiveMonthlyGoal
+                    let progress: Double = monthlyGoal > 0
+                        ? min(Double(item.count) / Double(monthlyGoal), 1.0)
                         : 0
-                    let barColor = monthBarColor(count: item.count, goal: monthlyInOfficeGoal, isFutureMonth: item.month > currentMonth)
+                    let barColor = monthBarColor(count: item.count, goal: monthlyGoal, isFutureMonth: item.month > currentMonth)
                     
                     HStack(spacing: 12) {
                         // Month label
@@ -203,7 +200,7 @@ struct DashboardView: View {
                             .frame(width: 32, alignment: .trailing)
                         
                         // Goal indicator
-                        Text("/ \(monthlyInOfficeGoal)")
+                        Text("/ \(goalManager.effectiveMonthlyGoal)")
                             .font(.system(.caption, design: .rounded))
                             .foregroundColor(.secondary)
                             .frame(width: 32, alignment: .leading)

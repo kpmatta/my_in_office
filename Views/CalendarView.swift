@@ -30,6 +30,14 @@ struct CalendarView: View {
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Log")
+            // Sheet lives on the root NavigationView — never inside a ForEach or child
+            // subview — so SwiftUI manages exactly one sheet instance and state changes
+            // are never swallowed by subview recreation.
+            .sheet(isPresented: $showingStatusPicker) {
+                if let date = selectedDate {
+                    DayStatusPickerSheet(date: date, isPresented: $showingStatusPicker)
+                }
+            }
         }
     }
     
@@ -133,9 +141,7 @@ struct CalendarMonthDataView: View {
             // Color legend
             colorLegend
         }
-        .sheet(isPresented: $showingStatusPicker) {
-            statusPickerSheet
-        }
+        // Sheet has been intentionally moved to the root NavigationView in CalendarView.
     }
     
     // MARK: - Subcomponents
@@ -209,6 +215,9 @@ struct CalendarMonthDataView: View {
                 }
             }
             .frame(height: 48)
+            // Ensures the full 48pt cell area (including empty padding) is tappable,
+            // not just the text/icon pixels.
+            .contentShape(Rectangle())
             .scaleEffect(isSelected ? 1.08 : 1.0)
             .animation(.easeInOut(duration: 0.15), value: isSelected)
         }
@@ -256,69 +265,7 @@ struct CalendarMonthDataView: View {
         .padding(.horizontal)
     }
     
-    // MARK: - Status Picker Sheet
-    
-    private var statusPickerSheet: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
 
-                if let date = selectedDate {
-                    ForEach(DayStatus.selectable) { status in
-                        Button(action: {
-                            saveEntry(date: date, status: status)
-                            showingStatusPicker = false
-                        }) {
-                            HStack {
-                                Image(systemName: status.icon)
-                                    .font(.title3)
-                                    .frame(width: 32)
-                                
-                                Text(status.rawValue)
-                                    .font(.headline)
-                                
-                                Spacer()
-                                
-                                if statusFor(date: date) == status {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.white)
-                                }
-                            }
-                            .padding()
-                            .background(status.color.opacity(0.85))
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
-                        }
-                    }
-                    
-                    // Clear button
-                    Button(action: {
-                        clearEntry(date: date)
-                        showingStatusPicker = false
-                    }) {
-                        HStack {
-                            Image(systemName: "xmark.circle")
-                                .font(.title3)
-                                .frame(width: 32)
-                            Text("Clear")
-                                .font(.headline)
-                            Spacer()
-                        }
-                        .padding()
-                        .background(Color.gray.opacity(0.15))
-                        .foregroundColor(.primary)
-                        .cornerRadius(12)
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal)
-            .navigationTitle(selectedDate != nil ? formattedDate(selectedDate!) : "Select Date")
-            .navigationBarTitleDisplayMode(.inline)
-
-        }
-        .presentationDetents([.medium])
-    }
-    
     // MARK: - Helper Methods
     
     private func formattedDate(_ date: Date) -> String {
@@ -367,5 +314,108 @@ struct CalendarMonthDataView: View {
         guard let firstOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: displayedMonth))
         else { return 0 }
         return calendar.component(.weekday, from: firstOfMonth) - 1
+    }
+}
+
+// MARK: - DayStatusPickerSheet
+// Standalone sheet view with its own @Query so it can live on the root NavigationView
+// without depending on CalendarMonthDataView's state or modelContext.
+
+struct DayStatusPickerSheet: View {
+    let date: Date
+    @Binding var isPresented: Bool
+
+    @Environment(\.modelContext) private var modelContext
+    @Query private var records: [DayRecord]
+
+    private let calendar = Calendar.current
+
+    init(date: Date, isPresented: Binding<Bool>) {
+        self.date = date
+        self._isPresented = isPresented
+
+        // Query only records that fall on this specific day.
+        let start = Calendar.current.startOfDay(for: date)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
+        _records = Query(
+            filter: #Predicate<DayRecord> { record in
+                record.date >= start && record.date < end
+            }
+        )
+    }
+
+    private var currentStatus: DayStatus {
+        records.first?.status ?? .none
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                ForEach(DayStatus.selectable) { status in
+                    Button(action: {
+                        save(status: status)
+                        isPresented = false
+                    }) {
+                        HStack {
+                            Image(systemName: status.icon)
+                                .font(.title3)
+                                .frame(width: 32)
+                            Text(status.rawValue)
+                                .font(.headline)
+                            Spacer()
+                            if currentStatus == status {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .padding()
+                        .background(status.color.opacity(0.85))
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
+                    }
+                }
+
+                Button(action: {
+                    clear()
+                    isPresented = false
+                }) {
+                    HStack {
+                        Image(systemName: "xmark.circle")
+                            .font(.title3)
+                            .frame(width: 32)
+                        Text("Clear")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.15))
+                    .foregroundColor(.primary)
+                    .cornerRadius(12)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal)
+            .navigationTitle(formattedDate(date))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func save(status: DayStatus) {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let dayDate = calendar.date(from: components) else { return }
+        records.forEach { modelContext.delete($0) }
+        modelContext.insert(DayRecord(date: dayDate, status: status, isAutoDetected: false))
+    }
+
+    private func clear() {
+        records.forEach { modelContext.delete($0) }
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        return formatter.string(from: date)
     }
 }
