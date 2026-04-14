@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreLocation
+import MapKit
 
 struct SettingsView: View {
     @ObservedObject var locationManager: LocationManager
@@ -12,10 +13,34 @@ struct SettingsView: View {
     
     @State private var addressInput: String = ""
     @State private var showSuccess: Bool = false
+    @State private var showingLocationSearch: Bool = false
     
     var body: some View {
         NavigationView {
             Form {
+                // MARK: - Current Workplace
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Current Workplace")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        let currentAddress = locationManager.resolvedAddress ?? officeAddress
+                        if currentAddress.isEmpty {
+                            Text("No location set")
+                                .font(.headline)
+                                .foregroundColor(.gray)
+                        } else {
+                            Text(currentAddress)
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
                 // MARK: - In-Office Goals
                 Section(header: goalSectionHeader()) {
                     GoalRow(label: "Yearly Goal", value: $yearlyInOfficeGoal)
@@ -37,64 +62,36 @@ struct SettingsView: View {
                 }
                 
                 // MARK: - Work Location
-                Section(header: Text("Work Location"), footer: Text("Enter your office address. It will be converted to a geofence location for automatic in-office tracking.")) {
-                    TextField("Office Address", text: $addressInput)
-                        .textContentType(.fullStreetAddress)
-                        .autocorrectionDisabled(false)
+                Section(header: Text("Work Location"), footer: Text("Search for your office address or use current GPS location for automatic in-office tracking.")) {
                     
-                    HStack {
-                        Button(action: {
-                            showSuccess = false
-                            locationManager.geocodeAddress(addressInput) { success in
-                                if success {
-                                    officeAddress = addressInput
-                                    showSuccess = true
-                                }
-                            }
-                        }) {
-                            HStack {
-                                if locationManager.isGeocoding {
-                                    ProgressView().padding(.trailing, 2)
-                                }
-                                Text("Set by Address")
-                            }
+                    Button(action: {
+                        showingLocationSearch = true
+                    }) {
+                        HStack {
+                            Image(systemName: "magnifyingglass")
+                            Text("Search for Workplace Address")
                         }
-                        .disabled(addressInput.trimmingCharacters(in: .whitespaces).isEmpty || locationManager.isGeocoding || locationManager.isFetchingCurrentLocation)
-                        .buttonStyle(.bordered)
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            showSuccess = false
-                            locationManager.setCurrentLocationAsOffice { success, newAddress in
-                                if success, let address = newAddress {
-                                    addressInput = address
-                                    officeAddress = address
-                                    showSuccess = true
-                                }
-                            }
-                        }) {
-                            HStack {
-                                if locationManager.isFetchingCurrentLocation {
-                                    ProgressView().padding(.trailing, 2)
-                                } else {
-                                    Image(systemName: "location.fill")
-                                }
-                                Text("Current")
-                            }
-                        }
-                        .disabled(locationManager.isGeocoding || locationManager.isFetchingCurrentLocation)
-                        .buttonStyle(.borderedProminent)
                     }
                     
-                    // Current saved address
-                    HStack {
-                        Text("Current")
-                        Spacer()
-                        Text(locationManager.resolvedAddress ?? officeAddress)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.trailing)
+                    Button(action: {
+                        showSuccess = false
+                        locationManager.setCurrentLocationAsOffice { success, newAddress in
+                            if success, let address = newAddress {
+                                officeAddress = address
+                                showSuccess = true
+                            }
+                        }
+                    }) {
+                        HStack {
+                            if locationManager.isFetchingCurrentLocation {
+                                ProgressView().padding(.trailing, 2)
+                            } else {
+                                Image(systemName: "location.fill")
+                            }
+                            Text("Use Current Location")
+                        }
                     }
+                    .disabled(locationManager.isFetchingCurrentLocation)
                     
                     // Success feedback
                     if showSuccess {
@@ -122,9 +119,11 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .onAppear {
-                if addressInput.isEmpty {
-                    addressInput = officeAddress
+            .sheet(isPresented: $showingLocationSearch) {
+                LocationSearchView { coordinate, address in
+                    officeAddress = address
+                    locationManager.setOfficeLocation(coordinate: coordinate, address: address)
+                    showSuccess = true
                 }
             }
         }
@@ -164,6 +163,108 @@ struct GoalRow: View {
                 Spacer()
                 Text("\(value) days")
                     .foregroundColor(.secondary)
+            }
+        }
+    }
+}
+class LocationSearchViewModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+    @Published var searchQuery = "" {
+        didSet {
+            if searchQuery.isEmpty {
+                completions = []
+            } else {
+                completer.queryFragment = searchQuery
+            }
+        }
+    }
+    
+    @Published var completions: [MKLocalSearchCompletion] = []
+    
+    private let completer = MKLocalSearchCompleter()
+    
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = [.address, .pointOfInterest]
+    }
+    
+    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        self.completions = completer.results
+    }
+    
+    func geocodeCompletion(_ completion: MKLocalSearchCompletion, completionHandler: @escaping (CLLocationCoordinate2D?, String?) -> Void) {
+        let searchRequest = MKLocalSearch.Request(completion: completion)
+        let search = MKLocalSearch(request: searchRequest)
+        search.start { response, error in
+            guard let mapItem = response?.mapItems.first,
+                  let coordinate = mapItem.placemark.location?.coordinate else {
+                completionHandler(nil, nil)
+                return
+            }
+            
+            let placemark = mapItem.placemark
+            let validName = mapItem.name ?? placemark.name ?? ""
+            let displayString: String
+            
+            if !validName.isEmpty {
+                displayString = validName
+            } else {
+                let street = placemark.thoroughfare ?? ""
+                let city = placemark.locality ?? ""
+                displayString = [street, city].filter { !$0.isEmpty }.joined(separator: ", ")
+            }
+            
+            let finalAddress = displayString.isEmpty ? completion.title : displayString
+            completionHandler(coordinate, finalAddress)
+        }
+    }
+}
+
+struct LocationSearchView: View {
+    @StateObject private var viewModel = LocationSearchViewModel()
+    @Environment(\.dismiss) private var dismiss
+    
+    // Callback when a location is successfully geocoded
+    let onSelect: (CLLocationCoordinate2D, String) -> Void
+    
+    var body: some View {
+        NavigationView {
+            List(viewModel.completions, id: \.self) { completion in
+                Button(action: {
+                    selectCompletion(completion)
+                }) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(completion.title)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        if !completion.subtitle.isEmpty {
+                            Text(completion.subtitle)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .listStyle(.plain)
+            .searchable(text: $viewModel.searchQuery, prompt: "Search for address...")
+            .navigationTitle("Find Workplace")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+    
+    private func selectCompletion(_ completion: MKLocalSearchCompletion) {
+        viewModel.geocodeCompletion(completion) { coordinate, address in
+            if let coordinate = coordinate, let address = address {
+                onSelect(coordinate, address)
+                dismiss()
             }
         }
     }

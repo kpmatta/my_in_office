@@ -3,22 +3,27 @@ import SwiftData
 
 @main
 struct InOfficeApp: App {
-    var sharedModelContainer: ModelContainer = {
+    let sharedModelContainer: ModelContainer
+    @StateObject private var locationManager: LocationManager
+    
+    init() {
         let schema = Schema([
             DayRecord.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
+            self.sharedModelContainer = container
+            self._locationManager = StateObject(wrappedValue: LocationManager(modelContainer: container))
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
-    }()
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(locationManager: locationManager)
         }
         .modelContainer(sharedModelContainer)
     }

@@ -2,9 +2,6 @@ import SwiftUI
 import SwiftData
 
 struct CalendarView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \DayRecord.date, order: .reverse) private var records: [DayRecord]
-    
     @State private var displayedMonth = Date()
     @State private var selectedDate: Date? = nil
     @State private var showingStatusPicker = false
@@ -20,34 +17,23 @@ struct CalendarView: View {
                     // Month navigation header
                     monthHeader
                     
-                    // Calendar Card
-                    VStack(spacing: 12) {
-                        dayOfWeekHeader
-                        calendarGrid
-                    }
-                    .padding(.vertical, 20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 24)
-                            .fill(Color(.systemBackground))
-                            .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
+                    // Calendar Card & Legend & Data Wrapper
+                    CalendarMonthDataView(
+                        displayedMonth: displayedMonth,
+                        selectedDate: $selectedDate,
+                        showingStatusPicker: $showingStatusPicker,
+                        daysOfWeek: daysOfWeek,
+                        columns: columns
                     )
-                    .padding(.horizontal)
-                    
-                    // Color legend
-                    colorLegend
                 }
                 .padding(.vertical)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Log")
-            .sheet(isPresented: $showingStatusPicker) {
-                statusPickerSheet
-            }
         }
     }
     
     // MARK: - Month Header
-    
     private var monthHeader: some View {
         HStack {
             Button(action: { changeMonth(by: -1) }) {
@@ -80,7 +66,79 @@ struct CalendarView: View {
         .padding(.horizontal, 20)
     }
     
-    // MARK: - Day of Week Header
+    private func changeMonth(by value: Int) {
+        if let newMonth = calendar.date(byAdding: .month, value: value, to: displayedMonth) {
+            displayedMonth = newMonth
+        }
+    }
+    
+    private func monthYearString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Isolated Data View
+
+struct CalendarMonthDataView: View {
+    let displayedMonth: Date
+    @Binding var selectedDate: Date?
+    @Binding var showingStatusPicker: Bool
+    
+    let daysOfWeek: [String]
+    let columns: [GridItem]
+    
+    @Environment(\.modelContext) private var modelContext
+    @Query private var records: [DayRecord]
+    
+    private let calendar = Calendar.current
+    
+    init(displayedMonth: Date, selectedDate: Binding<Date?>, showingStatusPicker: Binding<Bool>, daysOfWeek: [String], columns: [GridItem]) {
+        self.displayedMonth = displayedMonth
+        self._selectedDate = selectedDate
+        self._showingStatusPicker = showingStatusPicker
+        self.daysOfWeek = daysOfWeek
+        self.columns = columns
+        
+        let cal = Calendar.current
+        let startOfMonth = cal.date(from: cal.dateComponents([.year, .month], from: displayedMonth))!
+        let startOfNextMonth = cal.date(byAdding: .month, value: 1, to: startOfMonth)!
+        
+        // Dynamically bounding the Query strictly to the displayed month!
+        _records = Query(
+            filter: #Predicate<DayRecord> { record in
+                record.date >= startOfMonth && record.date < startOfNextMonth
+            },
+            sort: \DayRecord.date,
+            order: .reverse
+        )
+    }
+    
+    var body: some View {
+        VStack(spacing: 24) {
+            // Calendar Card
+            VStack(spacing: 12) {
+                dayOfWeekHeader
+                calendarGrid
+            }
+            .padding(.vertical, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
+            )
+            .padding(.horizontal)
+            
+            // Color legend
+            colorLegend
+        }
+        .sheet(isPresented: $showingStatusPicker) {
+            statusPickerSheet
+        }
+    }
+    
+    // MARK: - Subcomponents
     
     private var dayOfWeekHeader: some View {
         LazyVGrid(columns: columns, spacing: 4) {
@@ -94,8 +152,6 @@ struct CalendarView: View {
         .padding(.horizontal, 8)
         .padding(.bottom, 8)
     }
-    
-    // MARK: - Calendar Grid
     
     private var calendarGrid: some View {
         let days = daysInMonth()
@@ -114,8 +170,6 @@ struct CalendarView: View {
         }
         .padding(.horizontal, 8)
     }
-    
-    // MARK: - Day Cell
     
     private func dayCellView(for date: Date) -> some View {
         let status = statusFor(date: date)
@@ -161,8 +215,6 @@ struct CalendarView: View {
         .buttonStyle(.plain)
     }
     
-    // MARK: - Category Counts
-    
     private var colorLegend: some View {
         let monthDays = daysInMonth()
         let legendColumns = [GridItem(.adaptive(minimum: 140, maximum: .infinity), spacing: 16)]
@@ -207,13 +259,10 @@ struct CalendarView: View {
     // MARK: - Status Picker Sheet
     
     private var statusPickerSheet: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
+
                 if let date = selectedDate {
-                    Text(date, style: .date)
-                        .font(.title3.bold())
-                        .padding(.top)
-                    
                     ForEach(DayStatus.selectable) { status in
                         Button(action: {
                             saveEntry(date: date, status: status)
@@ -259,23 +308,24 @@ struct CalendarView: View {
                         .foregroundColor(.primary)
                         .cornerRadius(12)
                     }
-                    
-                    Spacer()
                 }
+                Spacer()
             }
             .padding(.horizontal)
-            .navigationTitle("Set Status")
+            .navigationTitle(selectedDate != nil ? formattedDate(selectedDate!) : "Select Date")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showingStatusPicker = false }
-                }
-            }
+
         }
         .presentationDetents([.medium])
     }
     
-    // MARK: - Helpers
+    // MARK: - Helper Methods
+    
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        return formatter.string(from: date)
+    }
     
     private func statusFor(date: Date) -> DayStatus {
         if let record = records.first(where: { calendar.isDate($0.date, inSameDayAs: date) }) {
@@ -317,17 +367,5 @@ struct CalendarView: View {
         guard let firstOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: displayedMonth))
         else { return 0 }
         return calendar.component(.weekday, from: firstOfMonth) - 1
-    }
-    
-    private func changeMonth(by value: Int) {
-        if let newMonth = calendar.date(byAdding: .month, value: value, to: displayedMonth) {
-            displayedMonth = newMonth
-        }
-    }
-    
-    private func monthYearString(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
-        return formatter.string(from: date)
     }
 }

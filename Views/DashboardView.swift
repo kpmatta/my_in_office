@@ -1,13 +1,29 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Enums
+enum TimePeriod: String, CaseIterable, Identifiable {
+    case week = "Week"
+    case month = "Month"
+    case year = "Year"
+    
+    var id: Self { self }
+}
+
+enum CardMode {
+    case hero
+    case grid
+}
+
 struct DashboardView: View {
-    @Query private var records: [DayRecord]
+    @Query(sort: \DayRecord.date, order: .reverse) private var records: [DayRecord]
     
     // In-Office Goals from Settings
     @AppStorage("yearlyInOfficeGoal") private var yearlyInOfficeGoal: Int = 200
     @AppStorage("monthlyInOfficeGoal") private var monthlyInOfficeGoal: Int = 18
     @AppStorage("weeklyInOfficeGoal") private var weeklyInOfficeGoal: Int = 4
+    
+    @State private var selectedTimePeriod: TimePeriod = .week
     
     private let calendar = Calendar.current
     
@@ -15,65 +31,122 @@ struct DashboardView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
-                    // MARK: - In-Office Goal Progress
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "building.2.fill")
-                                .font(.title3)
-                                .foregroundColor(DayStatus.inOffice.color)
-                            Text("In-Office Progress")
-                                .font(.title2.bold())
-                        }
-                        .padding(.horizontal)
-                        
-                        // Three goal cards side by side
-                        HStack(spacing: 10) {
-                            GoalProgressCard(
-                                label: "Week",
-                                count: inOfficeCount(for: thisWeekRecords),
-                                goal: weeklyInOfficeGoal,
-                                color: DayStatus.inOffice.color
-                            )
-                            GoalProgressCard(
-                                label: currentMonthShort,
-                                count: inOfficeCount(for: thisMonthRecords),
-                                goal: monthlyInOfficeGoal,
-                                color: DayStatus.inOffice.color
-                            )
-                            GoalProgressCard(
-                                label: currentYearName,
-                                count: inOfficeCount(for: thisYearRecords),
-                                goal: yearlyInOfficeGoal,
-                                color: DayStatus.inOffice.color
-                            )
-                        }
-                        .padding(.horizontal)
-                    }
                     
-                    // MARK: - All Categories Summary
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("All Categories")
-                            .font(.title2.bold())
-                            .padding(.horizontal)
-                        
-                        // This Week
-                        periodRow(title: "This Week", icon: "calendar.day.timeline.left", records: thisWeekRecords)
-                        
-                        // This Month
-                        periodRow(title: currentMonthName, icon: "calendar", records: thisMonthRecords)
-                        
-                        // This Year
-                        periodRow(title: currentYearName, icon: "chart.bar.fill", records: thisYearRecords)
+                    // Top: Hero Card
+                    GoalProgressCard(
+                        mode: .hero,
+                        timePeriod: selectedTimePeriod,
+                        selectedTimePeriod: $selectedTimePeriod, // For the Menu to mutate
+                        counts: getCounts(for: selectedTimePeriod),
+                        goal: getGoal(for: selectedTimePeriod)
+                    )
+                    .padding(.horizontal)
+                    
+                    // Middle: Grid Cards
+                    HStack(spacing: 16) {
+                        ForEach(gridPeriods, id: \.self) { period in
+                            GoalProgressCard(
+                                mode: .grid,
+                                timePeriod: period,
+                                selectedTimePeriod: .constant(period), // Grid doesn't mutate
+                                counts: getCounts(for: period),
+                                goal: getGoal(for: period)
+                            )
+                        }
                     }
+                    .padding(.horizontal)
                     
                     // MARK: - Monthly In-Office Breakdown
                     monthlyBreakdownSection
-
+                    
+                    // Bottom: Recent Logs List
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Recent Logs")
+                            .font(.title3.bold())
+                            .padding(.horizontal)
+                        
+                        let recentRecords = Array(records.prefix(5))
+                        if recentRecords.isEmpty {
+                            Text("No recent logs.")
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal)
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(Array(recentRecords.enumerated()), id: \.offset) { index, record in
+                                    HStack(spacing: 12) {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(record.status.color)
+                                            .frame(width: 36, height: 36)
+                                            .overlay(Image(systemName: record.status.icon).foregroundColor(.white).font(.system(size: 14, weight: .bold)))
+                                        
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(record.date, style: .date)
+                                                .font(.headline)
+                                            Text(record.status.rawValue)
+                                                .font(.subheadline)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 10)
+                                    .padding(.horizontal, 16)
+                                    
+                                    if index < recentRecords.count - 1 {
+                                        Divider().padding(.leading, 64)
+                                    }
+                                }
+                            }
+                            .background(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .fill(Color(.systemBackground))
+                                    .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
+                            )
+                            .padding(.horizontal)
+                        }
+                    }
                 }
-                .padding(.top, 8)
+                .padding(.vertical)
             }
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Dashboard")
         }
+    }
+    
+    // MARK: - Helpers
+    
+    private var gridPeriods: [TimePeriod] {
+        TimePeriod.allCases.filter { $0 != selectedTimePeriod }
+    }
+    
+    private func getGoal(for period: TimePeriod) -> Int {
+        switch period {
+        case .week: return weeklyInOfficeGoal
+        case .month: return monthlyInOfficeGoal
+        case .year: return yearlyInOfficeGoal
+        }
+    }
+    
+    private func getCounts(for period: TimePeriod) -> [DayStatus: Int] {
+        let periodRecords: [DayRecord]
+        let now = Date()
+        
+        switch period {
+        case .week:
+            guard let interval = calendar.dateInterval(of: .weekOfYear, for: now) else { return [:] }
+            periodRecords = records.filter { $0.date >= interval.start && $0.date < interval.end }
+        case .month:
+            guard let interval = calendar.dateInterval(of: .month, for: now) else { return [:] }
+            periodRecords = records.filter { $0.date >= interval.start && $0.date < interval.end }
+        case .year:
+            guard let interval = calendar.dateInterval(of: .year, for: now) else { return [:] }
+            periodRecords = records.filter { $0.date >= interval.start && $0.date < interval.end }
+        }
+        
+        var counts: [DayStatus: Int] = [.inOffice: 0, .remote: 0, .pto: 0, .holiday: 0]
+        for status in DayStatus.selectable {
+            counts[status] = periodRecords.filter { $0.status == status }.count
+        }
+        return counts
     }
     
     // MARK: - Monthly In-Office Breakdown
@@ -164,7 +237,6 @@ struct DashboardView: View {
         }
     }
     
-    /// Returns the appropriate color for a month's progress bar based on goal attainment.
     private func monthBarColor(count: Int, goal: Int, isFutureMonth: Bool) -> Color {
         if isFutureMonth || count == 0 {
             return Color(.systemGray4)
@@ -178,65 +250,7 @@ struct DashboardView: View {
             return Color(red: 0.92, green: 0.34, blue: 0.34)       // Red – behind
         }
     }
-    
-    // MARK: - Period Summary Row
-    
-    private func periodRow(title: String, icon: String, records: [DayRecord]) -> some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.body)
-                    .foregroundColor(.accentColor)
-                Text(title)
-                    .font(.headline.bold())
-                Spacer()
-            }
-            
-            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], spacing: 12) {
-                ForEach(DayStatus.selectable) { status in
-                    let count = records.filter { $0.status == status }.count
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(status.color)
-                            .frame(width: 20, height: 20)
-                            .overlay(
-                                Image(systemName: status.icon)
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(.white)
-                            )
-                        
-                        Text("\(count)")
-                            .font(.system(.body, design: .rounded, weight: .bold))
-                            .frame(minWidth: 24, alignment: .leading)
-                        
-                        Text(status.rawValue)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color(.systemGray5), lineWidth: 1)
-        )
-        .padding(.horizontal)
-    }
-    
 
-    // MARK: - Helpers
-    
-    private func inOfficeCount(for filtered: [DayRecord]) -> Int {
-        filtered.filter { $0.status == .inOffice }.count
-    }
-    
-    /// Monthly in-office data for all 12 months of the current year.
     private var monthlyInOfficeCounts: [(month: Int, name: String, count: Int)] {
         guard let yearInterval = calendar.dateInterval(of: .year, for: Date()) else { return [] }
         let yearRecords = records.filter { $0.date >= yearInterval.start && $0.date < yearInterval.end && $0.status == .inOffice }
@@ -255,84 +269,167 @@ struct DashboardView: View {
             return (month: month, name: name, count: count)
         }
     }
+}
+
+// MARK: - Components
+
+struct DashboardCategoryBreakdownView: View {
+    let mode: CardMode
+    let counts: [DayStatus: Int]
     
-    private var thisWeekRecords: [DayRecord] {
-        guard let interval = calendar.dateInterval(of: .weekOfYear, for: Date()) else { return [] }
-        return records.filter { $0.date >= interval.start && $0.date < interval.end }
-    }
-    
-    private var thisMonthRecords: [DayRecord] {
-        guard let interval = calendar.dateInterval(of: .month, for: Date()) else { return [] }
-        return records.filter { $0.date >= interval.start && $0.date < interval.end }
-    }
-    
-    private var thisYearRecords: [DayRecord] {
-        guard let interval = calendar.dateInterval(of: .year, for: Date()) else { return [] }
-        return records.filter { $0.date >= interval.start && $0.date < interval.end }
-    }
-    
-    private var currentMonthName: String {
-        let f = DateFormatter(); f.dateFormat = "MMMM"; return f.string(from: Date())
-    }
-    
-    private var currentMonthShort: String {
-        let f = DateFormatter(); f.dateFormat = "MMM"; return f.string(from: Date())
-    }
-    
-    private var currentYearName: String {
-        let f = DateFormatter(); f.dateFormat = "yyyy"; return f.string(from: Date())
+    var body: some View {
+        if mode == .hero {
+            VStack(spacing: 8) {
+                ForEach(DayStatus.selectable) { status in
+                    HStack {
+                        Circle()
+                            .fill(status.color)
+                            .frame(width: 10, height: 10)
+                        
+                        Text(status.rawValue)
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Text("\(counts[status] ?? 0)")
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundColor(.primary)
+                    }
+                    if status != DayStatus.selectable.last {
+                        Divider()
+                            .opacity(0.5)
+                    }
+                }
+            }
+        } else {
+            // Minimized 2x2 grid for Grid mode
+            let columns = [GridItem(.flexible()), GridItem(.flexible())]
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(DayStatus.selectable) { status in
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(status.color)
+                            .frame(width: 8, height: 8)
+                        Text("\(counts[status] ?? 0)")
+                            .font(.system(.caption, design: .rounded, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 }
 
-// MARK: - Goal Progress Card
-
 struct GoalProgressCard: View {
-    let label: String
-    let count: Int
+    let mode: CardMode
+    let timePeriod: TimePeriod
+    @Binding var selectedTimePeriod: TimePeriod
+    let counts: [DayStatus: Int]
     let goal: Int
-    let color: Color
+    
+    private var inOfficeCount: Int { counts[.inOffice] ?? 0 }
     
     private var progress: Double {
         guard goal > 0 else { return 0 }
-        return min(Double(count) / Double(goal), 1.0)
+        return min(Double(inOfficeCount) / Double(goal), 1.0)
     }
     
     var body: some View {
-        VStack(spacing: 8) {
-            Text(label)
-                .font(.caption.bold())
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: mode == .hero ? 16 : 12) {
             
-            ZStack {
-                Circle()
-                    .stroke(Color(.systemGray5), lineWidth: 6)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(color.gradient, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                
-                VStack(spacing: 0) {
-                    Text("\(count)")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundColor(color)
-                    Text("/ \(goal)")
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundColor(.secondary)
+            // Header Row
+            if mode == .hero {
+                HStack {
+                    ZStack {
+                        Circle()
+                            .fill(DayStatus.inOffice.color.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "building.2.fill")
+                            .foregroundColor(DayStatus.inOffice.color)
+                            .font(.system(size: 14, weight: .bold))
+                    }
+                    Text("In-Office Progress")
+                        .font(.title3.bold())
+                    
+                    Spacer()
+                    
+                    Menu {
+                        ForEach(TimePeriod.allCases) { period in
+                            Button(period.rawValue) {
+                                selectedTimePeriod = period
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(selectedTimePeriod.rawValue)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                        .foregroundColor(.primary)
+                    }
+                }
+            } else {
+                Text(timePeriod.rawValue)
+                    .font(.subheadline.bold())
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            
+            // Content
+            if mode == .hero {
+                HStack(spacing: 24) {
+                    chartView(size: 120, labelSize: 32, subLabelSize: 14, strokeWidth: 10)
+                    
+                    // Embedded Breakdown
+                    DashboardCategoryBreakdownView(mode: .hero, counts: counts)
+                }
+            } else {
+                VStack(spacing: 12) {
+                    chartView(size: 72, labelSize: 22, subLabelSize: 11, strokeWidth: 6)
+                    DashboardCategoryBreakdownView(mode: .grid, counts: counts)
+                        .padding(.top, 4)
                 }
             }
-            .frame(width: 72, height: 72)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .padding(mode == .hero ? 20 : 16)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 20)
                 .fill(Color(.systemBackground))
-                .shadow(color: color.opacity(0.12), radius: 6, x: 0, y: 3)
+                .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(color.opacity(0.15), lineWidth: 1)
-        )
+    }
+    
+    @ViewBuilder
+    private func chartView(size: CGFloat, labelSize: CGFloat, subLabelSize: CGFloat, strokeWidth: CGFloat) -> some View {
+        let color = DayStatus.inOffice.color
+        ZStack {
+            Circle()
+                .stroke(Color(.systemGray5), lineWidth: strokeWidth)
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(color.gradient, style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            
+            VStack(spacing: 0) {
+                Text("\(inOfficeCount)")
+                    .font(.system(size: labelSize, weight: .bold, design: .rounded))
+                    .foregroundColor(color)
+                Text("/ \(goal)")
+                    .font(.system(size: subLabelSize, weight: .medium, design: .rounded))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .frame(maxWidth: mode == .grid ? .infinity : nil)
     }
 }
 

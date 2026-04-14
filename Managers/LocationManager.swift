@@ -1,7 +1,7 @@
 import Foundation
 import CoreLocation
 import Combine
-
+import SwiftData
 class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     
@@ -78,7 +78,10 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         manager.requestLocation()
     }
     
-    override init() {
+    let modelContainer: ModelContainer
+    
+    init(modelContainer: ModelContainer) {
+        self.modelContainer = modelContainer
         super.init()
         manager.delegate = self
         authorizationStatus = manager.authorizationStatus
@@ -105,6 +108,16 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         manager.requestState(for: region)
     }
     
+    func setOfficeLocation(coordinate: CLLocationCoordinate2D, address: String) {
+        self.officeCoordinate = coordinate
+        self.resolvedAddress = address
+        
+        UserDefaults.standard.set(coordinate.latitude, forKey: "officeLatitude")
+        UserDefaults.standard.set(coordinate.longitude, forKey: "officeLongitude")
+        
+        setupGeofence(for: coordinate)
+    }
+    
     // MARK: - CLLocationManagerDelegate
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -122,9 +135,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         if region.identifier == "OfficeRegion" {
             DispatchQueue.main.async {
                 self.isInsideOffice = true
-                // In a real app, you would log an automatic entry to SwiftData here or post a Notification
-                NotificationCenter.default.post(name: Notification.Name("EnteredOffice"), object: nil)
             }
+            logInOfficeForToday()
         }
     }
     
@@ -132,23 +144,52 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         if region.identifier == "OfficeRegion" {
             DispatchQueue.main.async {
                 self.isInsideOffice = false
-                NotificationCenter.default.post(name: Notification.Name("ExitedOffice"), object: nil)
             }
         }
     }
     
     func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
         if region.identifier == "OfficeRegion" {
+            let isNowInside = (state == .inside)
+            
             DispatchQueue.main.async {
-                let wasInside = self.isInsideOffice
-                let isNowInside = (state == .inside)
-                
                 self.isInsideOffice = isNowInside
-                
-                // If we determined we are inside, and we just initialized or transitioned to this state, post notification
-                if isNowInside {
-                    NotificationCenter.default.post(name: Notification.Name("EnteredOffice"), object: nil)
+            }
+            
+            if isNowInside {
+                logInOfficeForToday()
+            }
+        }
+    }
+    
+    private func logInOfficeForToday() {
+        Task {
+            let context = ModelContext(modelContainer)
+            let calendar = Calendar.current
+            let todayDate = Date()
+            let todayStart = calendar.startOfDay(for: todayDate)
+            guard let tomorrowStart = calendar.date(byAdding: .day, value: 1, to: todayStart) else { return }
+            
+            var descriptor = FetchDescriptor<DayRecord>(
+                predicate: #Predicate { $0.date >= todayStart && $0.date < tomorrowStart }
+            )
+            descriptor.fetchLimit = 1
+            
+            do {
+                let records = try context.fetch(descriptor)
+                if let existing = records.first {
+                    if existing.statusRaw != DayStatus.inOffice.rawValue {
+                        existing.statusRaw = DayStatus.inOffice.rawValue
+                        existing.isAutoDetected = true
+                        try context.save()
+                    }
+                } else {
+                    let newRecord = DayRecord(date: todayStart, status: .inOffice, isAutoDetected: true)
+                    context.insert(newRecord)
+                    try context.save()
                 }
+            } catch {
+                print("LocationManager Background Persistence Error: \(error.localizedDescription)")
             }
         }
     }
