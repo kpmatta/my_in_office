@@ -94,12 +94,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func setupGeofence(for coordinate: CLLocationCoordinate2D) {
         self.officeCoordinate = coordinate
         
-        // Only enable background updates if we have "Always" authorization
-        if manager.authorizationStatus == .authorizedAlways {
-            manager.allowsBackgroundLocationUpdates = true
-            manager.pausesLocationUpdatesAutomatically = false
-        }
-        
         let region = CLCircularRegion(center: coordinate, radius: officeRadius, identifier: "OfficeRegion")
         region.notifyOnEntry = true
         region.notifyOnExit = true
@@ -122,11 +116,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
-        if authorizationStatus == .authorizedAlways {
-            manager.allowsBackgroundLocationUpdates = true
-            manager.pausesLocationUpdatesAutomatically = false
-            setupGeofence(for: officeCoordinate)
-        } else if authorizationStatus == .authorizedWhenInUse {
+        if authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse {
             setupGeofence(for: officeCoordinate)
         }
     }

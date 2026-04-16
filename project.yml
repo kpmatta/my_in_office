@@ -9,6 +9,8 @@ targets:
     settings:
       DEVELOPMENT_TEAM: AZ4AF4XBGH
       CODE_SIGN_STYLE: Automatic
+      MARKETING_VERSION: 1.0.1
+      CURRENT_PROJECT_VERSION: 2
     sources:
       - path: App
       - path: Models
@@ -22,5 +24,3 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         NSLocationWhenInUseUsageDescription: "We need your location to automatically track when you enter the office."
         NSLocationAlwaysAndWhenInUseUsageDescription: "We need your location to automatically track when you enter the office."
-        UIBackgroundModes:
-          - location
