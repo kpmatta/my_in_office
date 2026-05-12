@@ -6,36 +6,12 @@ struct SettingsView: View {
     @ObservedObject var locationManager: LocationManager
     @Environment(GoalManager.self) private var goalManager
 
-    @AppStorage("officeAddress") private var officeAddress: String = "One Apple Park Way, Cupertino, CA"
 
-    @State private var showSuccess: Bool = false
-    @State private var showingLocationSearch: Bool = false
 
     var body: some View {
         NavigationView {
             Form {
-                // MARK: - Current Workplace
-                Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Current Workplace")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-
-                        let currentAddress = locationManager.resolvedAddress ?? officeAddress
-                        if currentAddress.isEmpty {
-                            Text("No location set")
-                                .font(.headline)
-                                .foregroundColor(.gray)
-                        } else {
-                            Text(currentAddress)
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
+                WorkplaceSettingsSection(locationManager: locationManager)
 
                 // MARK: - In-Office Goals
                 Section(header: goalSectionHeader()) {
@@ -97,83 +73,10 @@ struct SettingsView: View {
                         .padding(.top, 4)
                     }
                 }
-
-                // MARK: - Location Permissions
-                Section(header: Text("Location Permissions")) {
-                    HStack {
-                        Text("Status")
-                        Spacer()
-                        Text(authStatusText)
-                            .foregroundColor(.secondary)
-                    }
-                    Button("Request Permissions") {
-                        locationManager.requestPermissions()
-                    }
-                }
-
-                // MARK: - Work Location
-                Section(header: Text("Work Location"), footer: Text("Search for your office address or use current GPS location for automatic in-office tracking.")) {
-
-                    Button(action: {
-                        showingLocationSearch = true
-                    }) {
-                        HStack {
-                            Image(systemName: "magnifyingglass")
-                            Text("Search for Workplace Address")
-                        }
-                    }
-
-                    Button(action: {
-                        showSuccess = false
-                        locationManager.setCurrentLocationAsOffice { success, newAddress in
-                            if success, let address = newAddress {
-                                officeAddress = address
-                                showSuccess = true
-                            }
-                        }
-                    }) {
-                        HStack {
-                            if locationManager.isFetchingCurrentLocation {
-                                ProgressView().padding(.trailing, 2)
-                            } else {
-                                Image(systemName: "location.fill")
-                            }
-                            Text("Use Current Location")
-                        }
-                    }
-                    .disabled(locationManager.isFetchingCurrentLocation)
-
-                    if showSuccess {
-                        Label("Location updated successfully", systemImage: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.footnote)
-                    }
-
-                    if let error = locationManager.geocodingError {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundColor(.red)
-                            .font(.footnote)
-                    }
-                }
-
-                // MARK: - Background Status
-                Section(header: Text("Background Status")) {
-                    HStack {
-                        Text("Inside Office Geofence?")
-                        Spacer()
-                        Text(locationManager.isInsideOffice ? "Yes" : "No")
-                            .foregroundColor(locationManager.isInsideOffice ? .green : .red)
-                    }
-                }
+                
+                DataManagementSection()
             }
             .navigationTitle("Settings")
-            .sheet(isPresented: $showingLocationSearch) {
-                LocationSearchView { coordinate, address in
-                    officeAddress = address
-                    locationManager.setOfficeLocation(coordinate: coordinate, address: address)
-                    showSuccess = true
-                }
-            }
         }
     }
 
@@ -215,16 +118,7 @@ struct SettingsView: View {
         }
     }
 
-    var authStatusText: String {
-        switch locationManager.authorizationStatus {
-        case .notDetermined: return "Not Determined"
-        case .restricted:    return "Restricted"
-        case .denied:        return "Denied"
-        case .authorizedAlways:    return "Always"
-        case .authorizedWhenInUse: return "When in Use"
-        @unknown default:    return "Unknown"
-        }
-    }
+
 }
 
 // MARK: - GoalLockRow

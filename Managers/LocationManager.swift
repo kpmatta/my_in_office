@@ -17,7 +17,18 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // Default office coordinates (Example: Replace with user settings later)
     // 37.3346, -122.0090 is Apple Park in Cupertino
     @Published var officeCoordinate = CLLocationCoordinate2D(latitude: 37.3346, longitude: -122.0090)
-    let officeRadius: CLLocationDistance = 200 // 200 meters geofence
+    
+    @Published var officeRadius: CLLocationDistance = {
+        let stored = UserDefaults.standard.double(forKey: "officeRadius")
+        return stored > 0 ? stored : 200.0
+    }() {
+        didSet {
+            UserDefaults.standard.set(officeRadius, forKey: "officeRadius")
+            if authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse {
+                setupGeofence(for: officeCoordinate)
+            }
+        }
+    }
     
     private let geocoder = CLGeocoder()
     

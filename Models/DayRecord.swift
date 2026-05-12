@@ -6,6 +6,9 @@ final class DayRecord {
     var date: Date
     var statusRaw: String
     var isAutoDetected: Bool
+    var notes: String?
+    var cloudKitRecordID: String?
+    var syncedToCloud: Bool
     
     // Computed property to safely handle the enum
     var status: DayStatus {
@@ -17,12 +20,15 @@ final class DayRecord {
         }
     }
     
-    init(date: Date, status: DayStatus, isAutoDetected: Bool = false) {
+    init(date: Date, status: DayStatus, isAutoDetected: Bool = false, notes: String? = nil, cloudKitRecordID: String? = nil, syncedToCloud: Bool = false) {
         // Strip time components to store just the day
         let calendar = Calendar.current
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         self.date = calendar.date(from: components) ?? date
         self.statusRaw = status.rawValue
         self.isAutoDetected = isAutoDetected
+        self.notes = notes
+        self.cloudKitRecordID = cloudKitRecordID
+        self.syncedToCloud = syncedToCloud
     }
 }

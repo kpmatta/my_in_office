@@ -3,12 +3,16 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0209380C77386B901929DC91 /* WorkplaceSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0E86E3ABA51D7FAE62D103 /* WorkplaceSettingsSection.swift */; };
+		14DAAA659AEC8AE236D0C45A /* GoalManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADAF9244F28E369A9A5EA500 /* GoalManager.swift */; };
+		1EDF788B0E1EBD1B1326CE9D /* CSVImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42AF735DA28F62F5A0F8544D /* CSVImporter.swift */; };
 		232E9F47B84D94D21F944958 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CBFC427C2334185A21488F /* LocationManager.swift */; };
-		AA11BB22CC33DD44EE55FF66 /* GoalManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF67 /* GoalManager.swift */; };
+		2A32263C1FF33646D32CF972 /* CSVExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07D885C046AC6293AD3F488 /* CSVExporter.swift */; };
+		2C7D9AB3A94AF2674739DB65 /* DataManagementSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CDC182FC998CD5DF378B921 /* DataManagementSection.swift */; };
 		3CE1AD4FDC2FB4781E14DE98 /* DayRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD95E8C3AB00C0EAAD963E73 /* DayRecord.swift */; };
 		3D1CBCD9A342A15E06C2975F /* InOfficeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA3145E8BAA40B331518876 /* InOfficeApp.swift */; };
 		3D95F19356ECD9021A7437DB /* CalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99C1396D07150BDF65A61286 /* CalendarView.swift */; };
@@ -17,19 +21,25 @@
 		833C91DEA26F589ED2544D2B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EE48953C406207CCDDB70B0 /* ContentView.swift */; };
 		D0B927ABBEA7F89893869376 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EE5CA77B51038C93B99ADCF /* SettingsView.swift */; };
 		D7B267E91EE9DE6D4D82AA4C /* DayStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDC193F33189FC9FC19269AB /* DayStatus.swift */; };
+		E7F08A40CB426F779C90E1AC /* CalendarBatchEditManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA47978C635E128B4B6AE2 /* CalendarBatchEditManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1055DC3345D593822492F7E7 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		11064907CC403432E3FC930A /* InOffice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InOffice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2EE48953C406207CCDDB70B0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		42AF735DA28F62F5A0F8544D /* CSVImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSVImporter.swift; sourceTree = "<group>"; };
+		4CDC182FC998CD5DF378B921 /* DataManagementSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataManagementSection.swift; sourceTree = "<group>"; };
+		5CAA47978C635E128B4B6AE2 /* CalendarBatchEditManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarBatchEditManager.swift; sourceTree = "<group>"; };
 		5EE5CA77B51038C93B99ADCF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		722C05696DFD786687D11888 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		99C1396D07150BDF65A61286 /* CalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarView.swift; sourceTree = "<group>"; };
+		ADAF9244F28E369A9A5EA500 /* GoalManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalManager.swift; sourceTree = "<group>"; };
 		C5CBFC427C2334185A21488F /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
-		AA11BB22CC33DD44EE55FF67 /* GoalManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalManager.swift; sourceTree = "<group>"; };
 		CD95E8C3AB00C0EAAD963E73 /* DayRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayRecord.swift; sourceTree = "<group>"; };
 		EAA3145E8BAA40B331518876 /* InOfficeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InOfficeApp.swift; sourceTree = "<group>"; };
+		F07D885C046AC6293AD3F488 /* CSVExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSVExporter.swift; sourceTree = "<group>"; };
+		FB0E86E3ABA51D7FAE62D103 /* WorkplaceSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkplaceSettingsSection.swift; sourceTree = "<group>"; };
 		FDC193F33189FC9FC19269AB /* DayStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayStatus.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -57,7 +67,9 @@
 				99C1396D07150BDF65A61286 /* CalendarView.swift */,
 				2EE48953C406207CCDDB70B0 /* ContentView.swift */,
 				1055DC3345D593822492F7E7 /* DashboardView.swift */,
+				4CDC182FC998CD5DF378B921 /* DataManagementSection.swift */,
 				5EE5CA77B51038C93B99ADCF /* SettingsView.swift */,
+				FB0E86E3ABA51D7FAE62D103 /* WorkplaceSettingsSection.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -76,8 +88,11 @@
 		89EF08B4B75B48503D95759A /* Managers */ = {
 			isa = PBXGroup;
 			children = (
+				5CAA47978C635E128B4B6AE2 /* CalendarBatchEditManager.swift */,
+				F07D885C046AC6293AD3F488 /* CSVExporter.swift */,
+				42AF735DA28F62F5A0F8544D /* CSVImporter.swift */,
+				ADAF9244F28E369A9A5EA500 /* GoalManager.swift */,
 				C5CBFC427C2334185A21488F /* LocationManager.swift */,
-				AA11BB22CC33DD44EE55FF67 /* GoalManager.swift */,
 			);
 			path = Managers;
 			sourceTree = "<group>";
@@ -127,7 +142,6 @@
 				};
 			};
 			buildConfigurationList = D6FF94AA026258D3D20FD5E2 /* Build configuration list for PBXProject "InOffice" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -136,6 +150,8 @@
 			);
 			mainGroup = 87AD3F3DA28C11DA0B060934;
 			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2FBC3D8FE4566C6426D78D9E /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -160,15 +176,20 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2A32263C1FF33646D32CF972 /* CSVExporter.swift in Sources */,
+				1EDF788B0E1EBD1B1326CE9D /* CSVImporter.swift in Sources */,
+				E7F08A40CB426F779C90E1AC /* CalendarBatchEditManager.swift in Sources */,
 				3D95F19356ECD9021A7437DB /* CalendarView.swift in Sources */,
 				833C91DEA26F589ED2544D2B /* ContentView.swift in Sources */,
 				485599B81519E68B9D80F93A /* DashboardView.swift in Sources */,
+				2C7D9AB3A94AF2674739DB65 /* DataManagementSection.swift in Sources */,
 				3CE1AD4FDC2FB4781E14DE98 /* DayRecord.swift in Sources */,
 				D7B267E91EE9DE6D4D82AA4C /* DayStatus.swift in Sources */,
+				14DAAA659AEC8AE236D0C45A /* GoalManager.swift in Sources */,
 				3D1CBCD9A342A15E06C2975F /* InOfficeApp.swift in Sources */,
 				232E9F47B84D94D21F944958 /* LocationManager.swift in Sources */,
-				AA11BB22CC33DD44EE55FF66 /* GoalManager.swift in Sources */,
 				D0B927ABBEA7F89893869376 /* SettingsView.swift in Sources */,
+				0209380C77386B901929DC91 /* WorkplaceSettingsSection.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -243,6 +264,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4X3VN2H24V;
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -250,9 +272,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.matta.TrackInOffice;
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.matta.InOffice;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -262,6 +285,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4X3VN2H24V;
 				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -269,9 +293,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.matta.TrackInOffice;
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.matta.InOffice;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};

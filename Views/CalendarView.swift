@@ -5,6 +5,7 @@ struct CalendarView: View {
     @State private var displayedMonth = Date()
     @State private var selectedDate: Date? = nil
     @State private var showingStatusPicker = false
+    @State private var batchManager = CalendarBatchEditManager()
     
     private let calendar = Calendar.current
     private let daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -22,11 +23,36 @@ struct CalendarView: View {
                         displayedMonth: displayedMonth,
                         selectedDate: $selectedDate,
                         showingStatusPicker: $showingStatusPicker,
+                        batchManager: batchManager,
                         daysOfWeek: daysOfWeek,
                         columns: columns
                     )
                 }
                 .padding(.vertical)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 40)
+                        .onEnded { value in
+                            let horizontalDrag = value.translation.width
+                            let verticalDrag = value.translation.height
+                            
+                            // Ensure it's mostly a horizontal swipe so vertical scrolling isn't hijacked
+                            guard abs(horizontalDrag) > abs(verticalDrag) else { return }
+                            
+                            let threshold: CGFloat = 50
+                            if horizontalDrag > threshold {
+                                // Swipe right -> previous month
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    changeMonth(by: -1)
+                                }
+                            } else if horizontalDrag < -threshold {
+                                // Swipe left -> next month
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    changeMonth(by: 1)
+                                }
+                            }
+                        }
+                )
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Log")
@@ -34,8 +60,11 @@ struct CalendarView: View {
             // subview — so SwiftUI manages exactly one sheet instance and state changes
             // are never swallowed by subview recreation.
             .sheet(isPresented: $showingStatusPicker) {
-                if let date = selectedDate {
-                    DayStatusPickerSheet(date: date, isPresented: $showingStatusPicker)
+                DayStatusPickerSheet(date: selectedDate ?? Date(), isPresented: $showingStatusPicker)
+            }
+            .overlay(alignment: .bottom) {
+                if batchManager.isBatchEditMode {
+                    CalendarBatchEditPanel(batchManager: batchManager)
                 }
             }
         }
@@ -43,35 +72,56 @@ struct CalendarView: View {
     
     // MARK: - Month Header
     private var monthHeader: some View {
-        HStack {
-            Button(action: { changeMonth(by: -1) }) {
-                Image(systemName: "chevron.left")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .frame(width: 44, height: 44)
-                    .background(Color(.systemBackground))
-                    .clipShape(Circle())
-                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        VStack(spacing: 4) {
+            HStack {
+                Button(action: { 
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        changeMonth(by: -1)
+                    }
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .contentShape(Rectangle())
+                }
+                
+                Spacer()
+                
+                Text(monthYearString(from: displayedMonth))
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .id(displayedMonth)
+                    .transition(.opacity)
+                
+                Spacer()
+                
+                Button(action: { 
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        changeMonth(by: 1)
+                    }
+                }) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .contentShape(Rectangle())
+                }
             }
+            .padding(.horizontal, 24)
             
-            Spacer()
-            
-            Text(monthYearString(from: displayedMonth))
-                .font(.system(.title3, design: .rounded, weight: .bold))
-            
-            Spacer()
-            
-            Button(action: { changeMonth(by: 1) }) {
-                Image(systemName: "chevron.right")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .frame(width: 44, height: 44)
-                    .background(Color(.systemBackground))
-                    .clipShape(Circle())
-                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+            HStack(spacing: 6) {
+                ForEach(-2...2, id: \.self) { offset in
+                    let isCurrent = offset == 0
+                    let size: CGFloat = isCurrent ? 8 : (abs(offset) == 2 ? 4 : 6)
+                    let opacity: Double = isCurrent ? 1.0 : (abs(offset) == 2 ? 0.3 : 0.6)
+                    
+                    Circle()
+                        .fill(Color.primary)
+                        .opacity(opacity)
+                        .frame(width: size, height: size)
+                }
             }
         }
-        .padding(.horizontal, 20)
     }
     
     private func changeMonth(by value: Int) {
@@ -93,6 +143,7 @@ struct CalendarMonthDataView: View {
     let displayedMonth: Date
     @Binding var selectedDate: Date?
     @Binding var showingStatusPicker: Bool
+    var batchManager: CalendarBatchEditManager
     
     let daysOfWeek: [String]
     let columns: [GridItem]
@@ -102,10 +153,11 @@ struct CalendarMonthDataView: View {
     
     private let calendar = Calendar.current
     
-    init(displayedMonth: Date, selectedDate: Binding<Date?>, showingStatusPicker: Binding<Bool>, daysOfWeek: [String], columns: [GridItem]) {
+    init(displayedMonth: Date, selectedDate: Binding<Date?>, showingStatusPicker: Binding<Bool>, batchManager: CalendarBatchEditManager, daysOfWeek: [String], columns: [GridItem]) {
         self.displayedMonth = displayedMonth
         self._selectedDate = selectedDate
         self._showingStatusPicker = showingStatusPicker
+        self.batchManager = batchManager
         self.daysOfWeek = daysOfWeek
         self.columns = columns
         
@@ -127,6 +179,23 @@ struct CalendarMonthDataView: View {
         VStack(spacing: 24) {
             // Calendar Card
             VStack(spacing: 12) {
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        if batchManager.isBatchEditMode {
+                            batchManager.exitBatchMode()
+                        } else {
+                            batchManager.enterBatchMode()
+                        }
+                    }) {
+                        Text(batchManager.isBatchEditMode ? "Cancel" : "Select")
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundColor(.blue)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                }
+                
                 dayOfWeekHeader
                 calendarGrid
             }
@@ -181,47 +250,59 @@ struct CalendarMonthDataView: View {
         let status = statusFor(date: date)
         let isToday = calendar.isDateInToday(date)
         let isSelected = selectedDate != nil && calendar.isDate(date, inSameDayAs: selectedDate!)
+        let isBatchSelected = batchManager.isBatchEditMode && batchManager.selectedDates.contains(calendar.startOfDay(for: date))
         
-        return Button(action: {
-            selectedDate = date
-            showingStatusPicker = true
-        }) {
-            ZStack {
-                // Background: soft gray for empty, solid color for status
+        return ZStack {
+            // Background: soft gray for empty, solid color for status
+            RoundedRectangle(cornerRadius: 12)
+                .fill(status == .none ? Color(.secondarySystemBackground) : status.color.opacity(0.9))
+            
+            // Selected highlight ring
+            if isBatchSelected {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(status == .none ? Color(.secondarySystemBackground) : status.color.opacity(0.9))
+                    .strokeBorder(Color.blue, lineWidth: 3)
+            } else if isSelected && !batchManager.isBatchEditMode {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.primary, lineWidth: 3)
+            } else if isToday && status == .none {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 2)
+            }
+            
+            // Day number
+            VStack(spacing: 2) {
+                Text("\(calendar.component(.day, from: date))")
+                    .font(.system(.callout, design: .rounded, weight: (status != .none || isSelected || isBatchSelected) ? .bold : .medium))
+                    .foregroundColor(status != .none ? .white : (isToday ? .accentColor : .primary))
                 
-                // Selected highlight ring
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.primary, lineWidth: 3)
-                } else if isToday && status == .none {
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 2)
-                }
-                
-                // Day number
-                VStack(spacing: 2) {
-                    Text("\(calendar.component(.day, from: date))")
-                        .font(.system(.callout, design: .rounded, weight: (status != .none || isSelected) ? .bold : .medium))
-                        .foregroundColor(status != .none ? .white : (isToday ? .accentColor : .primary))
-                    
-                    // Tiny icon if status is set
-                    if status != .none {
-                        Image(systemName: status.icon)
-                            .font(.system(size: 8))
-                            .foregroundColor(.white.opacity(0.9))
-                    }
+                // Tiny icon if status is set
+                if status != .none {
+                    Image(systemName: status.icon)
+                        .font(.system(size: 8))
+                        .foregroundColor(.white.opacity(0.9))
                 }
             }
-            .frame(height: 48)
-            // Ensures the full 48pt cell area (including empty padding) is tappable,
-            // not just the text/icon pixels.
-            .contentShape(Rectangle())
-            .scaleEffect(isSelected ? 1.08 : 1.0)
-            .animation(.easeInOut(duration: 0.15), value: isSelected)
         }
-        .buttonStyle(.plain)
+        .frame(height: 48)
+        // Ensures the full 48pt cell area (including empty padding) is tappable,
+        // not just the text/icon pixels.
+        .contentShape(Rectangle())
+        .scaleEffect((isSelected || isBatchSelected) ? 1.08 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .animation(.easeInOut(duration: 0.15), value: isBatchSelected)
+        .onTapGesture {
+            if batchManager.isBatchEditMode {
+                batchManager.toggleSelection(for: date)
+            } else {
+                selectedDate = date
+                showingStatusPicker = true
+            }
+        }
+        .onLongPressGesture(minimumDuration: 0.4) {
+            if !batchManager.isBatchEditMode {
+                batchManager.enterBatchMode(initialDate: date)
+            }
+        }
     }
     
     private var colorLegend: some View {
@@ -417,5 +498,75 @@ struct DayStatusPickerSheet: View {
         let formatter = DateFormatter()
         formatter.dateStyle = .long
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - CalendarBatchEditPanel
+struct CalendarBatchEditPanel: View {
+    var batchManager: CalendarBatchEditManager
+    @Environment(\.modelContext) private var modelContext
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text("\(batchManager.selectedDates.count) Selected")
+                    .font(.headline)
+                Spacer()
+                Button(action: { batchManager.exitBatchMode() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.gray)
+                }
+            }
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(DayStatus.selectable) { status in
+                        Button(action: {
+                            batchManager.applyStatus(status, context: modelContext)
+                        }) {
+                            VStack(spacing: 4) {
+                                Image(systemName: status.icon)
+                                    .font(.title3)
+                                Text(status.rawValue)
+                                    .font(.caption)
+                            }
+                            .frame(width: 70, height: 60)
+                            .background(status.color.opacity(0.85))
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                        }
+                    }
+                    
+                    Button(action: {
+                        batchManager.applyStatus(.none, context: modelContext)
+                    }) {
+                        VStack(spacing: 4) {
+                            Image(systemName: "xmark")
+                                .font(.title3)
+                            Text("Clear")
+                                .font(.caption)
+                        }
+                        .frame(width: 70, height: 60)
+                        .background(Color.gray.opacity(0.2))
+                        .foregroundColor(.primary)
+                        .cornerRadius(12)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.ultraThinMaterial)
+                .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(Color.white.opacity(0.3), lineWidth: 1)
+        )
+        .padding()
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .animation(.spring(), value: batchManager.isBatchEditMode)
     }
 }
