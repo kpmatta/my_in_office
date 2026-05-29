@@ -1,5 +1,4 @@
 import Foundation
-import SwiftData
 import Observation
 
 // MARK: - GoalLockMode
@@ -36,17 +35,12 @@ final class GoalManager {
         didSet { UserDefaults.standard.set(lockMode.rawValue, forKey: "goalLockMode") }
     }
 
-    // MARK: - SwiftData
-
-    private let modelContext: ModelContext
     private let calendar = Calendar.current
 
     // MARK: - Init (reads persisted values from UserDefaults)
 
-    init(modelContext: ModelContext) {
-        self.modelContext = modelContext
-
-        let ud = UserDefaults.standard
+    init(userDefaults: UserDefaults = .standard) {
+        let ud = userDefaults
         let storedWeekly  = ud.integer(forKey: "weeklyInOfficeGoal")
         let storedMonthly = ud.integer(forKey: "monthlyInOfficeGoal")
         let storedYearly  = ud.integer(forKey: "yearlyInOfficeGoal")
@@ -58,93 +52,48 @@ final class GoalManager {
         self.lockMode    = GoalLockMode(rawValue: storedMode) ?? .none
     }
 
-    // MARK: - Logged days helpers
+    // MARK: - Dynamic Goals
 
-    var loggedThisWeek: Int {
-        guard let interval = calendar.dateInterval(of: .weekOfYear, for: Date()) else { return 0 }
-        return fetchInOfficeDays(from: interval.start, to: interval.end)
-    }
-
-    var loggedThisMonth: Int {
-        guard let interval = calendar.dateInterval(of: .month, for: Date()) else { return 0 }
-        return fetchInOfficeDays(from: interval.start, to: interval.end)
-    }
-
-    var loggedThisYear: Int {
-        guard let interval = calendar.dateInterval(of: .year, for: Date()) else { return 0 }
-        return fetchInOfficeDays(from: interval.start, to: interval.end)
-    }
-
-    // MARK: - Calendar helpers
-
-    /// Remaining full + partial weeks from today to end of the current month.
-    var remainingWeeksInMonth: Int {
-        let now = Date()
-        guard let monthInterval = calendar.dateInterval(of: .month, for: now) else { return 1 }
-        var count = 0
-        var cursor = now
-        while cursor < monthInterval.end {
-            count += 1
-            cursor = calendar.date(byAdding: .weekOfYear, value: 1, to: cursor) ?? monthInterval.end
+    func effectiveGoal(for period: TimePeriod, metrics: DashboardMetrics, now: Date = Date()) -> Int {
+        switch period {
+        case .week:
+            return effectiveWeeklyGoal(metrics: metrics, now: now)
+        case .month:
+            return effectiveMonthlyGoal(metrics: metrics, now: now)
+        case .year:
+            return effectiveYearlyGoal
         }
-        return max(1, count)
     }
 
-    /// Remaining full + partial months from this month to end of the current year.
-    var remainingMonthsInYear: Int {
-        let currentMonth = calendar.component(.month, from: Date())
-        return max(1, 13 - currentMonth)
-    }
-
-    /// Remaining full + partial weeks from today to end of the current year.
-    var remainingWeeksInYear: Int {
-        let now = Date()
-        guard let yearInterval = calendar.dateInterval(of: .year, for: now) else { return 1 }
-        var count = 0
-        var cursor = now
-        while cursor < yearInterval.end {
-            count += 1
-            cursor = calendar.date(byAdding: .weekOfYear, value: 1, to: cursor) ?? yearInterval.end
-        }
-        return max(1, count)
-    }
-
-    // MARK: - Effective goals
-
-    var effectiveWeeklyGoal: Int {
+    private func effectiveWeeklyGoal(metrics: DashboardMetrics, now: Date) -> Int {
         switch lockMode {
         case .none, .weekly:
             return weeklyGoal
-
         case .monthly:
-            let remainingMonthTarget = max(0, monthlyGoal - loggedThisMonth)
+            let remainingMonthTarget = max(0, monthlyGoal - metrics.inOfficeCount(for: .month))
             guard remainingMonthTarget > 0 else { return 0 }
-            return max(1, Int(ceil(Double(remainingMonthTarget) / Double(remainingWeeksInMonth))))
-
+            return max(1, Int(ceil(Double(remainingMonthTarget) / Double(remainingWeeksInMonth(from: now)))))
         case .yearly:
-            let remainingYearTarget = max(0, yearlyGoal - loggedThisYear)
+            let remainingYearTarget = max(0, yearlyGoal - metrics.inOfficeCount(for: .year))
             guard remainingYearTarget > 0 else { return 0 }
-            return max(1, Int(ceil(Double(remainingYearTarget) / Double(remainingWeeksInYear))))
+            return max(1, Int(ceil(Double(remainingYearTarget) / Double(remainingWeeksInYear(from: now)))))
         }
     }
 
-    var effectiveMonthlyGoal: Int {
+    private func effectiveMonthlyGoal(metrics: DashboardMetrics, now: Date) -> Int {
         switch lockMode {
         case .none, .monthly:
             return monthlyGoal
-
         case .weekly:
-            // Project forward: already logged + what's left at weekly pace
-            return loggedThisMonth + weeklyGoal * remainingWeeksInMonth
-
+            return metrics.inOfficeCount(for: .month) + weeklyGoal * remainingWeeksInMonth(from: now)
         case .yearly:
-            let remainingYearTarget = max(0, yearlyGoal - loggedThisYear)
+            let remainingYearTarget = max(0, yearlyGoal - metrics.inOfficeCount(for: .year))
             guard remainingYearTarget > 0 else { return 0 }
-            return max(1, Int(ceil(Double(remainingYearTarget) / Double(remainingMonthsInYear))))
+            return max(1, Int(ceil(Double(remainingYearTarget) / Double(remainingMonthsInYear(from: now)))))
         }
     }
 
-    var effectiveYearlyGoal: Int {
+    private var effectiveYearlyGoal: Int {
         switch lockMode {
         case .none, .yearly:
             return yearlyGoal
@@ -155,13 +104,68 @@ final class GoalManager {
         }
     }
 
-    // MARK: - Private fetch
+    // MARK: - Calendar helpers
 
-    private func fetchInOfficeDays(from start: Date, to end: Date) -> Int {
-        let predicate = #Predicate<DayRecord> { record in
-            record.date >= start && record.date < end && record.statusRaw == "In Office"
+    private func remainingWeeksInMonth(from now: Date) -> Int {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: now) else { return 1 }
+        var count = 0
+        var cursor = now
+        while cursor < monthInterval.end {
+            count += 1
+            cursor = calendar.date(byAdding: .weekOfYear, value: 1, to: cursor) ?? monthInterval.end
         }
-        let descriptor = FetchDescriptor<DayRecord>(predicate: predicate)
-        return (try? modelContext.fetch(descriptor))?.count ?? 0
+        return max(1, count)
     }
+
+    private func remainingMonthsInYear(from now: Date) -> Int {
+        let currentMonth = calendar.component(.month, from: now)
+        return max(1, 13 - currentMonth)
+    }
+
+    private func remainingWeeksInYear(from now: Date) -> Int {
+        guard let yearInterval = calendar.dateInterval(of: .year, for: now) else { return 1 }
+        var count = 0
+        var cursor = now
+        while cursor < yearInterval.end {
+            count += 1
+            cursor = calendar.date(byAdding: .weekOfYear, value: 1, to: cursor) ?? yearInterval.end
+        }
+        return max(1, count)
+    }
+
+    // MARK: - Static goals (For Settings Display)
+
+    var staticWeeklyGoal: Int {
+        switch lockMode {
+        case .none, .weekly:
+            return weeklyGoal
+        case .monthly:
+            return max(1, Int(round(Double(monthlyGoal) * 12.0 / 52.0)))
+        case .yearly:
+            return max(1, Int(round(Double(yearlyGoal) / 52.0)))
+        }
+    }
+
+    var staticMonthlyGoal: Int {
+        switch lockMode {
+        case .none, .monthly:
+            return monthlyGoal
+        case .weekly:
+            return max(1, Int(round(Double(weeklyGoal) * 52.0 / 12.0)))
+        case .yearly:
+            return max(1, Int(round(Double(yearlyGoal) / 12.0)))
+        }
+    }
+
+    var staticYearlyGoal: Int {
+        switch lockMode {
+        case .none, .yearly:
+            return yearlyGoal
+        case .weekly:
+            return weeklyGoal * 52
+        case .monthly:
+            return monthlyGoal * 12
+        }
+    }
+
 }

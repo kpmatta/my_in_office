@@ -2,29 +2,33 @@ import Foundation
 import CoreLocation
 import Combine
 import SwiftData
+
 class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
+    private let workplaceStore: WorkplaceStore
+    private static let officeRegionIdentifier = "OfficeRegion"
+    private static let officeRadiusKey = "officeRadius"
     
     @Published var lastLocation: CLLocation?
     @Published var isInsideOffice: Bool = false
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var isGeocoding: Bool = false
-    @Published var geocodingError: String?
+    @Published var statusMessage: String?
+    @Published var activeAlert: AppAlertInfo?
     @Published var resolvedAddress: String?
     @Published var isFetchingCurrentLocation: Bool = false
-    private var locationCompletion: ((Bool, String?) -> Void)?
+    private var locationCompletion: ((Result<String, AppAlertInfo>) -> Void)?
     
-    // Default office coordinates (Example: Replace with user settings later)
-    // 37.3346, -122.0090 is Apple Park in Cupertino
-    @Published var officeCoordinate = CLLocationCoordinate2D(latitude: 37.3346, longitude: -122.0090)
+    @Published var officeCoordinate: CLLocationCoordinate2D?
     
     @Published var officeRadius: CLLocationDistance = {
-        let stored = UserDefaults.standard.double(forKey: "officeRadius")
+        let stored = UserDefaults.standard.double(forKey: LocationManager.officeRadiusKey)
         return stored > 0 ? stored : 200.0
     }() {
         didSet {
-            UserDefaults.standard.set(officeRadius, forKey: "officeRadius")
-            if authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse {
+            UserDefaults.standard.set(officeRadius, forKey: Self.officeRadiusKey)
+            if (authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse),
+               let officeCoordinate {
                 setupGeofence(for: officeCoordinate)
             }
         }
@@ -33,9 +37,9 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let geocoder = CLGeocoder()
     
     /// Geocode an address string and set up the geofence at the resolved location.
-    func geocodeAddress(_ address: String, completion: ((Bool) -> Void)? = nil) {
+    func geocodeAddress(_ address: String, completion: ((Result<Void, AppAlertInfo>) -> Void)? = nil) {
         isGeocoding = true
-        geocodingError = nil
+        clearStatusMessage()
         
         geocoder.geocodeAddressString(address) { [weak self] placemarks, error in
             DispatchQueue.main.async {
@@ -43,15 +47,18 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 self.isGeocoding = false
                 
                 if let error = error {
-                    self.geocodingError = error.localizedDescription
-                    completion?(false)
+                    AppDiagnostics.error("Address lookup failed", error: error)
+                    let alert = AppUserFeedback.addressLookupUnavailable(for: error)
+                    self.presentIssue(alert)
+                    completion?(.failure(alert))
                     return
                 }
                 
                 guard let placemark = placemarks?.first,
                       let location = placemark.location else {
-                    self.geocodingError = "No location found for this address."
-                    completion?(false)
+                    let alert = AppUserFeedback.addressNotFound
+                    self.presentIssue(alert)
+                    completion?(.failure(alert))
                     return
                 }
                 
@@ -64,38 +71,56 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 ].compactMap { $0 }
                 self.resolvedAddress = parts.joined(separator: ", ")
                 
-                // Persist the coordinates
-                UserDefaults.standard.set(location.coordinate.latitude, forKey: "officeLatitude")
-                UserDefaults.standard.set(location.coordinate.longitude, forKey: "officeLongitude")
+                // Persist the coordinates and address
+                self.workplaceStore.saveCoordinate(location.coordinate)
+                if let resolved = self.resolvedAddress {
+                    self.workplaceStore.saveAddress(resolved)
+                }
                 
                 self.setupGeofence(for: location.coordinate)
-                completion?(true)
+                self.clearStatusMessage()
+                completion?(.success(()))
             }
         }
     }
     
     /// Get the current location and reverse geocode it to set the office location.
-    func setCurrentLocationAsOffice(completion: @escaping (Bool, String?) -> Void) {
+    func setCurrentLocationAsOffice(completion: @escaping (Result<String, AppAlertInfo>) -> Void) {
         if authorizationStatus == .notDetermined {
             requestPermissions()
-            geocodingError = "Please wait for permissions, then tap 'Current Location' again."
-            completion(false, nil)
+            let alert = AppUserFeedback.locationPermissionNeeded
+            statusMessage = alert.message
+            completion(.failure(alert))
+            return
+        }
+
+        if authorizationStatus == .denied || authorizationStatus == .restricted {
+            let alert = AppUserFeedback.locationPermissionDenied
+            presentIssue(alert)
+            completion(.failure(alert))
             return
         }
         
         isFetchingCurrentLocation = true
-        geocodingError = nil
+        clearStatusMessage()
         locationCompletion = completion
         manager.requestLocation()
     }
     
     let modelContainer: ModelContainer
     
-    init(modelContainer: ModelContainer) {
+    init(
+        modelContainer: ModelContainer,
+        workplaceStore: WorkplaceStore = WorkplaceStore()
+    ) {
         self.modelContainer = modelContainer
+        self.workplaceStore = workplaceStore
         super.init()
         manager.delegate = self
         authorizationStatus = manager.authorizationStatus
+        let storedWorkplace = workplaceStore.migrateLegacyValuesIfNeeded()
+        officeCoordinate = storedWorkplace.coordinate
+        resolvedAddress = storedWorkplace.address
     }
     
     func requestPermissions() {
@@ -104,8 +129,12 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     func setupGeofence(for coordinate: CLLocationCoordinate2D) {
         self.officeCoordinate = coordinate
+
+        manager.monitoredRegions
+            .filter { $0.identifier == Self.officeRegionIdentifier }
+            .forEach { manager.stopMonitoring(for: $0) }
         
-        let region = CLCircularRegion(center: coordinate, radius: officeRadius, identifier: "OfficeRegion")
+        let region = CLCircularRegion(center: coordinate, radius: officeRadius, identifier: Self.officeRegionIdentifier)
         region.notifyOnEntry = true
         region.notifyOnExit = true
         
@@ -116,9 +145,10 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func setOfficeLocation(coordinate: CLLocationCoordinate2D, address: String) {
         self.officeCoordinate = coordinate
         self.resolvedAddress = address
+        clearStatusMessage()
         
-        UserDefaults.standard.set(coordinate.latitude, forKey: "officeLatitude")
-        UserDefaults.standard.set(coordinate.longitude, forKey: "officeLongitude")
+        workplaceStore.saveCoordinate(coordinate)
+        workplaceStore.saveAddress(address)
         
         setupGeofence(for: coordinate)
     }
@@ -128,12 +158,17 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
         if authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse {
-            setupGeofence(for: officeCoordinate)
+            clearStatusMessage()
+            if let officeCoordinate {
+                setupGeofence(for: officeCoordinate)
+            }
+        } else if authorizationStatus == .denied || authorizationStatus == .restricted {
+            statusMessage = AppUserFeedback.locationPermissionDenied.message
         }
     }
     
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
-        if region.identifier == "OfficeRegion" {
+        if region.identifier == Self.officeRegionIdentifier {
             DispatchQueue.main.async {
                 self.isInsideOffice = true
             }
@@ -142,7 +177,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
-        if region.identifier == "OfficeRegion" {
+        if region.identifier == Self.officeRegionIdentifier {
             DispatchQueue.main.async {
                 self.isInsideOffice = false
             }
@@ -150,7 +185,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
-        if region.identifier == "OfficeRegion" {
+        if region.identifier == Self.officeRegionIdentifier {
             let isNowInside = (state == .inside)
             
             DispatchQueue.main.async {
@@ -190,7 +225,10 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     try context.save()
                 }
             } catch {
-                print("LocationManager Background Persistence Error: \(error.localizedDescription)")
+                AppDiagnostics.error("Automatic office logging failed", error: error)
+                await MainActor.run {
+                    self.statusMessage = AppUserFeedback.autoLogFallbackNotice
+                }
             }
         }
     }
@@ -205,10 +243,11 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, error in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
-                        var addressString = "Current Location (\(location.coordinate.latitude), \(location.coordinate.longitude))"
+                        var addressString = self.resolvedAddress ?? "Current Location"
                         
                         if let error = error {
-                            self.geocodingError = error.localizedDescription
+                            AppDiagnostics.error("Reverse geocoding current location failed", error: error)
+                            self.statusMessage = AppUserFeedback.addressFallbackNotice
                         } else if let placemark = placemarks?.first {
                             let parts = [
                                 placemark.name,
@@ -219,13 +258,13 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                             addressString = parts.joined(separator: ", ")
                             self.resolvedAddress = addressString
                         }
-                        
-                        UserDefaults.standard.set(location.coordinate.latitude, forKey: "officeLatitude")
-                        UserDefaults.standard.set(location.coordinate.longitude, forKey: "officeLongitude")
+
+                        self.workplaceStore.saveCoordinate(location.coordinate)
+                        self.workplaceStore.saveAddress(addressString)
                         
                         self.setupGeofence(for: location.coordinate)
                         
-                        self.locationCompletion?(true, addressString)
+                        self.locationCompletion?(.success(addressString))
                         self.locationCompletion = nil
                     }
                 }
@@ -237,10 +276,33 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         if isFetchingCurrentLocation {
             DispatchQueue.main.async {
                 self.isFetchingCurrentLocation = false
-                self.geocodingError = "Failed to get location: \(error.localizedDescription)"
-                self.locationCompletion?(false, nil)
+                AppDiagnostics.error("Current location request failed", error: error)
+                let alert = AppUserFeedback.currentLocationUnavailable(for: error)
+                self.presentIssue(alert)
+                self.locationCompletion?(.failure(alert))
                 self.locationCompletion = nil
             }
         }
+    }
+
+    private func presentIssue(_ alert: AppAlertInfo) {
+        statusMessage = alert.message
+        activeAlert = alert
+    }
+
+    private func clearStatusMessage() {
+        statusMessage = nil
+        activeAlert = nil
+    }
+
+    func clearStoredOfficeData() {
+        workplaceStore.clearWorkplace()
+        resolvedAddress = nil
+        officeCoordinate = nil
+        isInsideOffice = false
+
+        manager.monitoredRegions
+            .filter { $0.identifier == Self.officeRegionIdentifier }
+            .forEach { manager.stopMonitoring(for: $0) }
     }
 }

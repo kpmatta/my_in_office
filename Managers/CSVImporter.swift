@@ -2,107 +2,177 @@ import Foundation
 import SwiftData
 
 struct CSVImporter {
-    enum ImportError: Error {
-        case fileReadError
-        case parseError
+    enum ImportError: Error, Equatable {
+        case fileAccessDenied
+        case fileReadFailed
+        case invalidFormat
+        case saveFailed
     }
-    
-    static func importCSV(from url: URL, context: ModelContext) throws {
-        // Read file content securely
-        guard url.startAccessingSecurityScopedResource() else {
-            throw ImportError.fileReadError
+
+    static func importCSV(from url: URL, container: ModelContainer) async throws {
+        let job = ImportJob(url: url, container: container)
+        try await Task.detached(priority: .utility) {
+            try performImport(job)
+        }.value
+    }
+
+    private static func performImport(_ job: ImportJob) throws {
+        let url = job.url
+        let didAccessSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
         }
-        defer { url.stopAccessingSecurityScopedResource() }
+
+        if !didAccessSecurityScope,
+           !FileManager.default.isReadableFile(atPath: url.path) {
+            throw ImportError.fileAccessDenied
+        }
 
         guard let content = try? String(contentsOf: url, encoding: .utf8) else {
-            throw ImportError.fileReadError
+            throw ImportError.fileReadFailed
         }
-        
+
         let lines = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        guard lines.count > 1 else { return } // Only header or empty
-        
+        guard lines.count > 1 else {
+            throw ImportError.invalidFormat
+        }
+
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
-        
+
         let calendar = Calendar.current
-        
-        // Skip header (lines[0])
-        for i in 1..<lines.count {
-            let line = lines[i]
+        var rowsByDate: [Date: ParsedRow] = [:]
+        rowsByDate.reserveCapacity(lines.count - 1)
+        var minDate: Date?
+        var maxDate: Date?
+
+        for line in lines.dropFirst() {
             let fields = parseCSVLine(line)
             guard fields.count >= 3 else { continue }
-            
+
             let dateStr = fields[0]
             let statusStr = fields[1]
             let autoStr = fields[2]
             let notesStr = fields.count >= 4 ? fields[3] : ""
-            
+
             guard let date = formatter.date(from: dateStr) else { continue }
-            let isAuto = (autoStr.lowercased() == "true")
-            let status = DayStatus(rawValue: statusStr) ?? .none
-            
-            // Normalize date to start of day
+
             let startOfDay = calendar.startOfDay(for: date)
-            guard let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) else { continue }
-            
-            // Check if record exists for this day
-            var descriptor = FetchDescriptor<DayRecord>(
-                predicate: #Predicate { $0.date >= startOfDay && $0.date < endOfDay }
+            let notes = restoredImportedNotes(from: notesStr)
+
+            rowsByDate[startOfDay] = ParsedRow(
+                date: startOfDay,
+                status: DayStatus(rawValue: statusStr) ?? .none,
+                isAutoDetected: autoStr.lowercased() == "true",
+                notes: notes
             )
-            descriptor.fetchLimit = 1
-            
-            do {
-                let existingRecords = try context.fetch(descriptor)
-                if let existing = existingRecords.first {
-                    // Update existing
-                    existing.statusRaw = status.rawValue
-                    existing.isAutoDetected = isAuto
-                    if !notesStr.isEmpty {
-                        existing.notes = notesStr
-                    }
-                } else {
-                    // Insert new
-                    let newRecord = DayRecord(date: startOfDay, status: status, isAutoDetected: isAuto, notes: notesStr.isEmpty ? nil : notesStr)
-                    context.insert(newRecord)
-                }
-            } catch {
-                print("Failed to fetch/insert record during import: \(error)")
-            }
+
+            minDate = minDate.map { min($0, startOfDay) } ?? startOfDay
+            maxDate = maxDate.map { max($0, startOfDay) } ?? startOfDay
         }
-        
-        try context.save()
+
+        guard !rowsByDate.isEmpty,
+              let startRange = minDate,
+              let endRangeStart = maxDate else {
+            throw ImportError.invalidFormat
+        }
+
+        let endRange = calendar.date(byAdding: .day, value: 1, to: endRangeStart) ?? endRangeStart
+        let context = ModelContext(job.container)
+
+        do {
+            let descriptor = FetchDescriptor<DayRecord>(
+                predicate: #Predicate { record in
+                    record.date >= startRange && record.date < endRange
+                }
+            )
+            let existingRecords = try context.fetch(descriptor)
+            var existingByDate: [Date: DayRecord] = [:]
+            existingByDate.reserveCapacity(existingRecords.count)
+
+            for record in existingRecords {
+                existingByDate[calendar.startOfDay(for: record.date)] = record
+            }
+
+            for row in rowsByDate.values {
+                if let existing = existingByDate[row.date] {
+                    existing.statusRaw = row.status.rawValue
+                    existing.isAutoDetected = row.isAutoDetected
+                    existing.notes = row.notes
+                } else {
+                    context.insert(
+                        DayRecord(
+                            date: row.date,
+                            status: row.status,
+                            isAutoDetected: row.isAutoDetected,
+                            notes: row.notes
+                        )
+                    )
+                }
+            }
+
+            try context.save()
+        } catch {
+            AppDiagnostics.error("CSV import failed", error: error)
+            throw ImportError.saveFailed
+        }
     }
-    
-    // A simple CSV line parser to handle quotes
+
+    private static func restoredImportedNotes(from notes: String) -> String? {
+        guard !notes.isEmpty else { return nil }
+
+        guard notes.first == "'",
+              let secondCharacter = notes.dropFirst().first,
+              "=+-@".contains(secondCharacter) else {
+            return notes
+        }
+
+        return String(notes.dropFirst())
+    }
+
     private static func parseCSVLine(_ line: String) -> [String] {
         var result = [String]()
         var currentField = ""
         var inQuotes = false
-        
+
         let characters = Array(line)
-        var i = 0
-        
-        while i < characters.count {
-            let char = characters[i]
-            
-            if char == "\"" {
-                if inQuotes && i + 1 < characters.count && characters[i+1] == "\"" {
-                    // Escaped quote ""
+        var index = 0
+
+        while index < characters.count {
+            let character = characters[index]
+
+            if character == "\"" {
+                if inQuotes && index + 1 < characters.count && characters[index + 1] == "\"" {
                     currentField.append("\"")
-                    i += 1 // skip the second quote
+                    index += 1
                 } else {
                     inQuotes.toggle()
                 }
-            } else if char == "," && !inQuotes {
+            } else if character == "," && !inQuotes {
                 result.append(currentField)
                 currentField = ""
             } else {
-                currentField.append(char)
+                currentField.append(character)
             }
-            i += 1
+
+            index += 1
         }
+
         result.append(currentField)
-        
         return result
     }
+}
+
+private struct ParsedRow {
+    let date: Date
+    let status: DayStatus
+    let isAutoDetected: Bool
+    let notes: String?
+}
+
+private struct ImportJob: @unchecked Sendable {
+    let url: URL
+    let container: ModelContainer
 }

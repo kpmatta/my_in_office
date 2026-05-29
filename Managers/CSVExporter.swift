@@ -1,36 +1,77 @@
 import Foundation
 
 struct CSVExporter {
-    static func export(records: [DayRecord]) -> URL? {
+    enum ExportError: Error {
+        case writeFailed
+    }
+
+    static func export(records: [DayRecord]) async -> Result<URL, ExportError> {
+        let snapshots = records.map { record in
+            ExportRecordSnapshot(
+                date: record.date,
+                statusRaw: record.statusRaw,
+                isAutoDetected: record.isAutoDetected,
+                notes: record.notes
+            )
+        }
+
+        return await Task.detached(priority: .utility) {
+            exportSnapshots(snapshots)
+        }.value
+    }
+
+    private static func exportSnapshots(_ records: [ExportRecordSnapshot]) -> Result<URL, ExportError> {
         var csvString = "Date,Status,AutoDetected,Notes\n"
-        
+
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
-        
+
         for record in records {
             let dateStr = formatter.string(from: record.date)
-            let statusStr = record.statusRaw
             let autoStr = record.isAutoDetected ? "true" : "false"
-            
-            // Escape notes
-            var notesStr = record.notes ?? ""
-            if notesStr.contains(",") || notesStr.contains("\n") || notesStr.contains("\"") {
-                notesStr = notesStr.replacingOccurrences(of: "\"", with: "\"\"")
-                notesStr = "\"\(notesStr)\""
-            }
-            
-            csvString.append("\(dateStr),\(statusStr),\(autoStr),\(notesStr)\n")
+            let notesStr = escapedCSVField(formulaSafeNotes(from: record.notes ?? ""))
+
+            csvString.append("\(dateStr),\(record.statusRaw),\(autoStr),\(notesStr)\n")
         }
-        
+
         let fileName = "InOffice_Backup_\(Int(Date().timeIntervalSince1970)).csv"
         let tempUrl = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-        
+
         do {
             try csvString.write(to: tempUrl, atomically: true, encoding: .utf8)
-            return tempUrl
+            try? FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.complete],
+                ofItemAtPath: tempUrl.path
+            )
+            return .success(tempUrl)
         } catch {
-            print("Failed to write CSV: \(error)")
-            return nil
+            AppDiagnostics.error("CSV export failed", error: error)
+            return .failure(.writeFailed)
         }
     }
+
+    private static func formulaSafeNotes(from notes: String) -> String {
+        guard let firstCharacter = notes.first,
+              "=+-@".contains(firstCharacter) else {
+            return notes
+        }
+
+        return "'\(notes)"
+    }
+
+    private static func escapedCSVField(_ value: String) -> String {
+        guard value.contains(",") || value.contains("\n") || value.contains("\"") else {
+            return value
+        }
+
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+    }
+}
+
+private struct ExportRecordSnapshot: Sendable {
+    let date: Date
+    let statusRaw: String
+    let isAutoDetected: Bool
+    let notes: String?
 }

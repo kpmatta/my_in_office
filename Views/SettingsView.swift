@@ -22,7 +22,7 @@ struct SettingsView: View {
                             get: { goalManager.yearlyGoal },
                             set: { goalManager.yearlyGoal = $0 }
                         ),
-                        effectiveValue: goalManager.effectiveYearlyGoal,
+                        effectiveValue: goalManager.staticYearlyGoal,
                         unit: "days",
                         range: 0...366,
                         isLocked: goalManager.lockMode == .yearly,
@@ -37,7 +37,7 @@ struct SettingsView: View {
                             get: { goalManager.monthlyGoal },
                             set: { goalManager.monthlyGoal = $0 }
                         ),
-                        effectiveValue: goalManager.effectiveMonthlyGoal,
+                        effectiveValue: goalManager.staticMonthlyGoal,
                         unit: "days",
                         range: 0...31,
                         isLocked: goalManager.lockMode == .monthly,
@@ -52,7 +52,7 @@ struct SettingsView: View {
                             get: { goalManager.weeklyGoal },
                             set: { goalManager.weeklyGoal = $0 }
                         ),
-                        effectiveValue: goalManager.effectiveWeeklyGoal,
+                        effectiveValue: goalManager.staticWeeklyGoal,
                         unit: "days",
                         range: 0...7,
                         isLocked: goalManager.lockMode == .weekly,
@@ -88,6 +88,8 @@ struct SettingsView: View {
         } else {
             goalManager.lockMode = mode
         }
+
+        AppHaptics.emphasizedSelection()
     }
 
     private var lockModeDescription: String {
@@ -174,17 +176,32 @@ struct GoalLockRow: View {
 class LocationSearchViewModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
     @Published var searchQuery = "" {
         didSet {
-            if searchQuery.isEmpty {
+            if trimmedQuery.isEmpty {
                 completions = []
+                isSearching = false
+                isSearchServiceUnavailable = false
             } else {
-                completer.queryFragment = searchQuery
+                isSearching = true
+                isSearchServiceUnavailable = false
+                completer.queryFragment = trimmedQuery
             }
         }
     }
 
     @Published var completions: [MKLocalSearchCompletion] = []
+    @Published var isSearching = false
+    @Published var isSearchServiceUnavailable = false
+    @Published var activeAlert: AppAlertInfo?
 
     private let completer = MKLocalSearchCompleter()
+
+    var trimmedQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var shouldShowNoResultsState: Bool {
+        !trimmedQuery.isEmpty && completions.isEmpty && !isSearching && !isSearchServiceUnavailable
+    }
 
     override init() {
         super.init()
@@ -193,16 +210,52 @@ class LocationSearchViewModel: NSObject, ObservableObject, MKLocalSearchComplete
     }
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        isSearching = false
+        isSearchServiceUnavailable = false
+        activeAlert = nil
         self.completions = completer.results
     }
 
-    func geocodeCompletion(_ completion: MKLocalSearchCompletion, completionHandler: @escaping (CLLocationCoordinate2D?, String?) -> Void) {
+    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        AppDiagnostics.error("Location search suggestions failed", error: error)
+
+        DispatchQueue.main.async {
+            self.isSearching = false
+            self.completions = []
+            self.isSearchServiceUnavailable = true
+            self.activeAlert = AppUserFeedback.locationSearchUnavailable
+        }
+    }
+
+    func retrySearch() {
+        guard !trimmedQuery.isEmpty else { return }
+
+        activeAlert = nil
+        isSearching = true
+        isSearchServiceUnavailable = false
+        completer.queryFragment = trimmedQuery
+    }
+
+    func geocodeCompletion(
+        _ completion: MKLocalSearchCompletion,
+        completionHandler: @escaping (Result<(CLLocationCoordinate2D, String), AppAlertInfo>) -> Void
+    ) {
         let searchRequest = MKLocalSearch.Request(completion: completion)
         let search = MKLocalSearch(request: searchRequest)
         search.start { response, error in
+            if let error {
+                AppDiagnostics.error("Location selection lookup failed", error: error)
+                DispatchQueue.main.async {
+                    completionHandler(.failure(AppUserFeedback.locationSelectionUnavailable(for: error)))
+                }
+                return
+            }
+
             guard let mapItem = response?.mapItems.first,
                   let coordinate = mapItem.placemark.location?.coordinate else {
-                completionHandler(nil, nil)
+                DispatchQueue.main.async {
+                    completionHandler(.failure(AppUserFeedback.addressNotFound))
+                }
                 return
             }
 
@@ -219,7 +272,9 @@ class LocationSearchViewModel: NSObject, ObservableObject, MKLocalSearchComplete
             }
 
             let finalAddress = displayString.isEmpty ? completion.title : displayString
-            completionHandler(coordinate, finalAddress)
+            DispatchQueue.main.async {
+                completionHandler(.success((coordinate, finalAddress)))
+            }
         }
     }
 }
@@ -234,24 +289,54 @@ struct LocationSearchView: View {
 
     var body: some View {
         NavigationView {
-            List(viewModel.completions, id: \.self) { completion in
-                Button(action: {
-                    selectCompletion(completion)
-                }) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(completion.title)
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        if !completion.subtitle.isEmpty {
-                            Text(completion.subtitle)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+            Group {
+                if viewModel.trimmedQuery.isEmpty {
+                    ContentUnavailableView(
+                        "Search for a workplace",
+                        systemImage: "mappin.and.ellipse",
+                        description: Text("Enter an address or office name to choose your workplace.")
+                    )
+                } else if viewModel.isSearchServiceUnavailable {
+                    ContentUnavailableView {
+                        Label("Search is unavailable right now", systemImage: "wifi.exclamationmark")
+                    } description: {
+                        Text("Check your connection, then try searching again.")
+                    } actions: {
+                        Button("Try Again") {
+                            viewModel.retrySearch()
                         }
                     }
-                    .padding(.vertical, 4)
+                } else if viewModel.isSearching && viewModel.completions.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Looking up places...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if viewModel.shouldShowNoResultsState {
+                    ContentUnavailableView.search(text: viewModel.trimmedQuery)
+                } else {
+                    List(viewModel.completions, id: \.self) { completion in
+                        Button(action: {
+                            selectCompletion(completion)
+                        }) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(completion.title)
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                if !completion.subtitle.isEmpty {
+                                    Text(completion.subtitle)
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .listStyle(.plain)
                 }
             }
-            .listStyle(.plain)
             .searchable(text: $viewModel.searchQuery, prompt: "Search for address...")
             .navigationTitle("Find Workplace")
             .navigationBarTitleDisplayMode(.inline)
@@ -263,13 +348,25 @@ struct LocationSearchView: View {
                 }
             }
         }
+        .alert(item: $viewModel.activeAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
     private func selectCompletion(_ completion: MKLocalSearchCompletion) {
-        viewModel.geocodeCompletion(completion) { coordinate, address in
-            if let coordinate = coordinate, let address = address {
+        viewModel.geocodeCompletion(completion) { result in
+            switch result {
+            case .success(let selection):
+                let (coordinate, address) = selection
                 onSelect(coordinate, address)
                 dismiss()
+            case .failure(let alert):
+                viewModel.activeAlert = alert
+                AppHaptics.error()
             }
         }
     }

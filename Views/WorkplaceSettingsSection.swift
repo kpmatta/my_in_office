@@ -3,7 +3,6 @@ import CoreLocation
 
 struct WorkplaceSettingsSection: View {
     @ObservedObject var locationManager: LocationManager
-    @AppStorage("officeAddress") private var officeAddress: String = "One Apple Park Way, Cupertino, CA"
     
     @State private var showingLocationSearch: Bool = false
     @State private var showSuccess: Bool = false
@@ -16,7 +15,7 @@ struct WorkplaceSettingsSection: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 
-                let currentAddress = locationManager.resolvedAddress ?? officeAddress
+                let currentAddress = locationManager.resolvedAddress ?? ""
                 if currentAddress.isEmpty {
                     Text("No location set")
                         .font(.headline)
@@ -46,6 +45,7 @@ struct WorkplaceSettingsSection: View {
             // MARK: - Change Workplace
             Button(action: {
                 showingLocationSearch = true
+                AppHaptics.selection()
             }) {
                 HStack {
                     Image(systemName: "magnifyingglass")
@@ -55,10 +55,13 @@ struct WorkplaceSettingsSection: View {
             
             Button(action: {
                 showSuccess = false
-                locationManager.setCurrentLocationAsOffice { success, newAddress in
-                    if success, let address = newAddress {
-                        officeAddress = address
+                locationManager.setCurrentLocationAsOffice { result in
+                    switch result {
+                    case .success:
                         showSuccess = true
+                        AppHaptics.success()
+                    case .failure:
+                        AppHaptics.error()
                     }
                 }
             }) {
@@ -79,8 +82,8 @@ struct WorkplaceSettingsSection: View {
                     .font(.footnote)
             }
             
-            if let error = locationManager.geocodingError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
+            if let message = locationManager.statusMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.red)
                     .font(.footnote)
             }
@@ -96,6 +99,7 @@ struct WorkplaceSettingsSection: View {
             if locationManager.authorizationStatus == .notDetermined {
                 Button("Request Permissions") {
                     locationManager.requestPermissions()
+                    AppHaptics.selection()
                 }
             }
             
@@ -108,10 +112,22 @@ struct WorkplaceSettingsSection: View {
         }
         .sheet(isPresented: $showingLocationSearch) {
             LocationSearchView { coordinate, address in
-                officeAddress = address
                 locationManager.setOfficeLocation(coordinate: coordinate, address: address)
                 showSuccess = true
+                AppHaptics.success()
             }
+        }
+        .alert(
+            item: Binding(
+                get: { locationManager.activeAlert },
+                set: { locationManager.activeAlert = $0 }
+            )
+        ) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
         }
     }
     

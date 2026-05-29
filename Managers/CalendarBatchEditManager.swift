@@ -34,8 +34,13 @@ final class CalendarBatchEditManager {
         selectedDates.removeAll()
     }
     
-    func applyStatus(_ status: DayStatus, context: ModelContext) {
-        guard !selectedDates.isEmpty else { return }
+    @discardableResult
+    func applyStatus(_ status: DayStatus, context: ModelContext) -> Result<Void, AppAlertInfo> {
+        guard !selectedDates.isEmpty else {
+            return .failure(AppUserFeedback.batchUpdateUnavailable)
+        }
+
+        var encounteredError: Error?
         
         for date in selectedDates {
             let start = date
@@ -60,16 +65,24 @@ final class CalendarBatchEditManager {
                     context.insert(newRecord)
                 }
             } catch {
-                print("Failed to fetch/update record for batch edit: \(error)")
+                encounteredError = error
+                break
             }
+        }
+
+        if let encounteredError {
+            AppDiagnostics.error("Batch edit fetch/update failed", error: encounteredError)
+            return .failure(AppUserFeedback.batchUpdateUnavailable)
         }
         
         do {
             try context.save()
         } catch {
-            print("Failed to save context after batch edit: \(error)")
+            AppDiagnostics.error("Batch edit save failed", error: error)
+            return .failure(AppUserFeedback.batchUpdateUnavailable)
         }
         
         exitBatchMode()
+        return .success(())
     }
 }

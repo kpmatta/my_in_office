@@ -2,14 +2,6 @@ import SwiftUI
 import SwiftData
 
 // MARK: - Enums
-enum TimePeriod: String, CaseIterable, Identifiable {
-    case week = "Week"
-    case month = "Month"
-    case year = "Year"
-    
-    var id: Self { self }
-}
-
 enum CardMode {
     case hero
     case grid
@@ -18,86 +10,98 @@ enum CardMode {
 struct DashboardView: View {
     @Query(sort: \DayRecord.date, order: .reverse) private var records: [DayRecord]
     @Environment(GoalManager.self) private var goalManager
+    @Environment(AppNavigationState.self) private var navigationState
 
     @State private var selectedTimePeriod: TimePeriod = .week
 
     private let calendar = Calendar.current
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+        return formatter
+    }()
     
     var body: some View {
+        let metrics = DashboardMetrics(records: records, calendar: calendar, now: Date())
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
-                    
-                    // Top: Hero Card
-                    GoalProgressCard(
-                        mode: .hero,
-                        timePeriod: selectedTimePeriod,
-                        selectedTimePeriod: $selectedTimePeriod, // For the Menu to mutate
-                        counts: getCounts(for: selectedTimePeriod),
-                        goal: getGoal(for: selectedTimePeriod)
-                    )
-                    .padding(.horizontal)
-                    
-                    // Middle: Grid Cards
-                    HStack(spacing: 16) {
-                        ForEach(gridPeriods, id: \.self) { period in
-                            GoalProgressCard(
-                                mode: .grid,
-                                timePeriod: period,
-                                selectedTimePeriod: .constant(period), // Grid doesn't mutate
-                                counts: getCounts(for: period),
-                                goal: getGoal(for: period)
-                            )
-                        }
-                    }
-                    .padding(.horizontal)
-                    
-                    // MARK: - Monthly In-Office Breakdown
-                    monthlyBreakdownSection
-                    
-                    // Bottom: Recent Logs List
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Recent Logs")
-                            .font(.title3.bold())
+                    if !metrics.hasRecords {
+                        dashboardEmptyState
                             .padding(.horizontal)
+                            .padding(.top, 16)
+                    } else {
+                        // Top: Hero Card
+                        GoalProgressCard(
+                            mode: .hero,
+                            timePeriod: selectedTimePeriod,
+                            selectedTimePeriod: $selectedTimePeriod, // For the Menu to mutate
+                            counts: metrics.counts(for: selectedTimePeriod),
+                            goal: goalManager.effectiveGoal(for: selectedTimePeriod, metrics: metrics)
+                        )
+                        .padding(.horizontal)
                         
-                        let recentRecords = Array(records.prefix(5))
-                        if recentRecords.isEmpty {
-                            Text("No recent logs.")
-                                .foregroundColor(.secondary)
+                        // Middle: Grid Cards
+                        HStack(spacing: 16) {
+                            ForEach(gridPeriods, id: \.self) { period in
+                                GoalProgressCard(
+                                    mode: .grid,
+                                    timePeriod: period,
+                                    selectedTimePeriod: .constant(period), // Grid doesn't mutate
+                                    counts: metrics.counts(for: period),
+                                    goal: goalManager.effectiveGoal(for: period, metrics: metrics)
+                                )
+                            }
+                        }
+                        .padding(.horizontal)
+                        
+                        // MARK: - Monthly In-Office Breakdown
+                        monthlyBreakdownSection(metrics: metrics)
+                        
+                        // Bottom: Recent Logs List
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Recent Logs")
+                                .font(.title3.bold())
                                 .padding(.horizontal)
-                        } else {
-                            VStack(spacing: 0) {
-                                ForEach(Array(recentRecords.enumerated()), id: \.offset) { index, record in
-                                    HStack(spacing: 12) {
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(record.status.color)
-                                            .frame(width: 36, height: 36)
-                                            .overlay(Image(systemName: record.status.icon).foregroundColor(.white).font(.system(size: 14, weight: .bold)))
-                                        
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(record.date, style: .date)
-                                                .font(.headline)
-                                            Text(record.status.rawValue)
-                                                .font(.subheadline)
-                                                .foregroundColor(.secondary)
+                            
+                            let recentRecords = metrics.recentRecords
+                            if recentRecords.isEmpty {
+                                Text("No recent logs.")
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(Array(recentRecords.enumerated()), id: \.offset) { index, record in
+                                        HStack(spacing: 12) {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(record.status.color)
+                                                .frame(width: 36, height: 36)
+                                                .overlay(Image(systemName: record.status.icon).foregroundColor(.white).font(.system(size: 14, weight: .bold)))
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(record.date, style: .date)
+                                                    .font(.headline)
+                                                Text(record.status.rawValue)
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            Spacer()
                                         }
-                                        Spacer()
-                                    }
-                                    .padding(.vertical, 10)
-                                    .padding(.horizontal, 16)
-                                    
-                                    if index < recentRecords.count - 1 {
-                                        Divider().padding(.leading, 64)
+                                        .padding(.vertical, 10)
+                                        .padding(.horizontal, 16)
+                                        
+                                        if index < recentRecords.count - 1 {
+                                            Divider().padding(.leading, 64)
+                                        }
                                     }
                                 }
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .fill(Color(.systemBackground))
+                                        .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
+                                )
+                                .padding(.horizontal)
                             }
-                            .background(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .fill(Color(.systemBackground))
-                                    .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
-                            )
-                            .padding(.horizontal)
                         }
                     }
                 }
@@ -107,6 +111,20 @@ struct DashboardView: View {
             .navigationTitle("Dashboard")
         }
     }
+
+    private var dashboardEmptyState: some View {
+        EmptyStateCard(
+            icon: "chart.pie.fill",
+            title: "Your progress dashboard starts here",
+            message: "Log your first day and this screen will fill with recent activity, goal progress, and monthly trends.",
+            buttonTitle: "Log Your First Day",
+            buttonSystemImage: "plus.circle.fill",
+            tint: DayStatus.inOffice.color
+        ) {
+            AppHaptics.selection()
+            navigationState.startFirstEntryFlow()
+        }
+    }
     
     // MARK: - Helpers
     
@@ -114,41 +132,11 @@ struct DashboardView: View {
         TimePeriod.allCases.filter { $0 != selectedTimePeriod }
     }
     
-    private func getGoal(for period: TimePeriod) -> Int {
-        switch period {
-        case .week:  return goalManager.effectiveWeeklyGoal
-        case .month: return goalManager.effectiveMonthlyGoal
-        case .year:  return goalManager.effectiveYearlyGoal
-        }
-    }
-    
-    private func getCounts(for period: TimePeriod) -> [DayStatus: Int] {
-        let periodRecords: [DayRecord]
-        let now = Date()
-        
-        switch period {
-        case .week:
-            guard let interval = calendar.dateInterval(of: .weekOfYear, for: now) else { return [:] }
-            periodRecords = records.filter { $0.date >= interval.start && $0.date < interval.end }
-        case .month:
-            guard let interval = calendar.dateInterval(of: .month, for: now) else { return [:] }
-            periodRecords = records.filter { $0.date >= interval.start && $0.date < interval.end }
-        case .year:
-            guard let interval = calendar.dateInterval(of: .year, for: now) else { return [:] }
-            periodRecords = records.filter { $0.date >= interval.start && $0.date < interval.end }
-        }
-        
-        var counts: [DayStatus: Int] = [.inOffice: 0, .remote: 0, .pto: 0, .holiday: 0]
-        for status in DayStatus.selectable {
-            counts[status] = periodRecords.filter { $0.status == status }.count
-        }
-        return counts
-    }
-    
     // MARK: - Monthly In-Office Breakdown
     
-    private var monthlyBreakdownSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+    private func monthlyBreakdownSection(metrics: DashboardMetrics) -> some View {
+        let monthlyGoal = goalManager.effectiveGoal(for: .month, metrics: metrics)
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
                 Image(systemName: "calendar.badge.clock")
                     .font(.title3)
@@ -158,13 +146,12 @@ struct DashboardView: View {
             }
             .padding(.horizontal)
             
-            let monthlyData = monthlyInOfficeCounts
+            let monthlyData = monthlyInOfficeCounts(metrics: metrics)
             let currentMonth = calendar.component(.month, from: Date())
             
             VStack(spacing: 0) {
                 ForEach(Array(monthlyData.enumerated()), id: \.offset) { index, item in
                     let isCurrentMonth = item.month == currentMonth
-                    let monthlyGoal = goalManager.effectiveMonthlyGoal
                     let progress: Double = monthlyGoal > 0
                         ? min(Double(item.count) / Double(monthlyGoal), 1.0)
                         : 0
@@ -200,7 +187,7 @@ struct DashboardView: View {
                             .frame(width: 32, alignment: .trailing)
                         
                         // Goal indicator
-                        Text("/ \(goalManager.effectiveMonthlyGoal)")
+                        Text("/ \(monthlyGoal)")
                             .font(.system(.caption, design: .rounded))
                             .foregroundColor(.secondary)
                             .frame(width: 32, alignment: .leading)
@@ -248,21 +235,18 @@ struct DashboardView: View {
         }
     }
 
-    private var monthlyInOfficeCounts: [(month: Int, name: String, count: Int)] {
-        guard let yearInterval = calendar.dateInterval(of: .year, for: Date()) else { return [] }
-        let yearRecords = records.filter { $0.date >= yearInterval.start && $0.date < yearInterval.end && $0.status == .inOffice }
-        
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM"
-        
+    private func monthlyInOfficeCounts(metrics: DashboardMetrics) -> [(month: Int, name: String, count: Int)] {
+        let year = calendar.component(.year, from: Date())
+        let countsByMonth = metrics.monthlyInOfficeCounts
+
         return (1...12).map { month in
-            let count = yearRecords.filter { calendar.component(.month, from: $0.date) == month }.count
             var components = DateComponents()
-            components.year = calendar.component(.year, from: Date())
+            components.year = year
             components.month = month
             components.day = 1
             let monthDate = calendar.date(from: components) ?? Date()
-            let name = formatter.string(from: monthDate)
+            let name = Self.monthFormatter.string(from: monthDate)
+            let count = countsByMonth[month] ?? 0
             return (month: month, name: name, count: count)
         }
     }
@@ -357,6 +341,7 @@ struct GoalProgressCard: View {
                         ForEach(TimePeriod.allCases) { period in
                             Button(period.rawValue) {
                                 selectedTimePeriod = period
+                                AppHaptics.selection()
                             }
                         }
                     } label: {
@@ -431,5 +416,16 @@ struct GoalProgressCard: View {
 }
 
 #Preview {
-    DashboardView()
+    if let container = try? ModelContainer(for: DayRecord.self) {
+        DashboardView()
+            .environment(GoalManager())
+            .environment(AppNavigationState())
+            .modelContainer(container)
+    } else {
+        ContentUnavailableView(
+            "Preview unavailable",
+            systemImage: "exclamationmark.triangle",
+            description: Text("The sample data store couldn't be created.")
+        )
+    }
 }

@@ -4,80 +4,95 @@ import UniformTypeIdentifiers
 
 struct DataManagementSection: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var records: [DayRecord]
-    
-    @State private var showingExporter = false
-    @State private var exportUrl: URL? = nil
-    
+    @Query(sort: \DayRecord.date, order: .reverse) private var records: [DayRecord]
+
+    @State private var shareSheetItem: ExportShareItem?
+    @State private var exportCleanupURL: URL?
     @State private var showingImporter = false
     @State private var showDeleteConfirmation = false
-    @State private var importMessage: String?
-    
+    @State private var statusMessage: String?
+    @State private var activeAlert: AppAlertInfo?
+    @State private var isExporting = false
+    @State private var isImporting = false
+
+    private var isBusy: Bool {
+        isExporting || isImporting
+    }
+
     var body: some View {
-        Section(header: Text("Data Management"), footer: Text("Backup or restore your attendance data. Deleting data cannot be undone.")) {
-            
+        Section(
+            header: Text("Data Management"),
+            footer: Text("Backup or restore your attendance data. Deleting data cannot be undone.")
+        ) {
             HStack {
                 Text("Total Records")
                 Spacer()
                 Text("\(records.count)")
                     .foregroundColor(.secondary)
             }
-            
-            // Export Button
+
             Button(action: {
-                if let url = CSVExporter.export(records: records) {
-                    exportUrl = url
-                    showingExporter = true
-                } else {
-                    importMessage = "Failed to generate CSV for export."
+                Task {
+                    await exportData()
                 }
             }) {
                 HStack {
-                    Image(systemName: "square.and.arrow.up")
-                    Text("Export Data")
+                    if isExporting {
+                        ProgressView()
+                            .padding(.trailing, 2)
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    Text(isExporting ? "Preparing Backup..." : "Export Data")
                 }
             }
-            .disabled(records.isEmpty)
-            .sheet(isPresented: $showingExporter, onDismiss: {
-                // Cleanup temp file
-                if let url = exportUrl {
-                    try? FileManager.default.removeItem(at: url)
-                    exportUrl = nil
-                }
-            }) {
-                ActivityViewController(activityItems: [exportUrl ?? URL(fileURLWithPath: "")])
+            .disabled(records.isEmpty || isBusy)
+            .sheet(item: $shareSheetItem, onDismiss: cleanupExportFile) { item in
+                ActivityViewController(activityItems: [item.url])
             }
-            
-            // Import Button
+
             Button(action: {
                 showingImporter = true
             }) {
                 HStack {
-                    Image(systemName: "square.and.arrow.down")
-                    Text("Import from CSV")
+                    if isImporting {
+                        ProgressView()
+                            .padding(.trailing, 2)
+                    } else {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    Text(isImporting ? "Importing..." : "Import from CSV")
                 }
             }
+            .disabled(isBusy)
             .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.commaSeparatedText]) { result in
                 switch result {
                 case .success(let url):
-                    do {
-                        try CSVImporter.importCSV(from: url, context: modelContext)
-                        importMessage = "Import successful!"
-                    } catch {
-                        importMessage = "Failed to import CSV: \(error.localizedDescription)"
+                    Task {
+                        await importData(from: url)
                     }
                 case .failure(let error):
-                    importMessage = "Failed to select file: \(error.localizedDescription)"
+                    if let alert = AppUserFeedback.fileSelectionUnavailable(for: error) {
+                        statusMessage = nil
+                        activeAlert = alert
+                        AppHaptics.error()
+                    }
                 }
             }
-            
-            if let message = importMessage {
+
+            if isBusy, let message = statusMessage {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text(message)
+                }
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            } else if let message = statusMessage {
                 Text(message)
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
-            
-            // Delete Button
+
             Button(role: .destructive, action: {
                 showDeleteConfirmation = true
             }) {
@@ -86,33 +101,110 @@ struct DataManagementSection: View {
                     Text("Delete All Data")
                 }
             }
-            .confirmationDialog("Are you sure you want to delete all data?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            .disabled(records.isEmpty || isBusy)
+            .confirmationDialog(
+                "Are you sure you want to delete all data?",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
                 Button("Delete All", role: .destructive) {
                     deleteAllData()
                 }
                 Button("Cancel", role: .cancel) { }
             }
         }
+        .alert(item: $activeAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
-    
+
+    private func exportData() async {
+        guard !records.isEmpty else { return }
+
+        isExporting = true
+        activeAlert = nil
+        statusMessage = "Preparing your backup..."
+
+        let result = await CSVExporter.export(records: records)
+
+        isExporting = false
+
+        switch result {
+        case .success(let url):
+            exportCleanupURL = url
+            shareSheetItem = ExportShareItem(url: url)
+            statusMessage = "Backup ready to share."
+            AppHaptics.success()
+        case .failure:
+            statusMessage = nil
+            activeAlert = AppUserFeedback.exportUnavailable
+            AppHaptics.error()
+        }
+    }
+
+    private func importData(from url: URL) async {
+        let container = modelContext.container
+
+        isImporting = true
+        activeAlert = nil
+        statusMessage = "Importing your backup..."
+
+        do {
+            try await CSVImporter.importCSV(from: url, container: container)
+            statusMessage = "Import complete. Your attendance history has been updated."
+            AppHaptics.success()
+        } catch let importError as CSVImporter.ImportError {
+            statusMessage = nil
+            activeAlert = AppUserFeedback.importUnavailable(for: importError)
+            AppHaptics.error()
+        } catch {
+            AppDiagnostics.error("Unexpected CSV import failure", error: error)
+            statusMessage = nil
+            activeAlert = AppUserFeedback.importUnavailable(for: .saveFailed)
+            AppHaptics.error()
+        }
+
+        isImporting = false
+    }
+
     private func deleteAllData() {
         do {
             try modelContext.delete(model: DayRecord.self)
             try modelContext.save()
-            importMessage = "All data deleted."
+            activeAlert = nil
+            statusMessage = "All attendance data has been deleted."
+            AppHaptics.success()
         } catch {
-            importMessage = "Failed to delete data: \(error.localizedDescription)"
+            AppDiagnostics.error("Delete all data failed", error: error)
+            statusMessage = nil
+            activeAlert = AppUserFeedback.deleteUnavailable
+            AppHaptics.error()
         }
+    }
+
+    private func cleanupExportFile() {
+        guard let url = exportCleanupURL else { return }
+        try? FileManager.default.removeItem(at: url)
+        exportCleanupURL = nil
+        shareSheetItem = nil
     }
 }
 
-// Helper to present UIActivityViewController
+private struct ExportShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 struct ActivityViewController: UIViewControllerRepresentable {
     var activityItems: [Any]
     var applicationActivities: [UIActivity]? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        return UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
+        UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

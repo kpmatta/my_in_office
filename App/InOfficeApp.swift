@@ -3,10 +3,11 @@ import SwiftData
 
 @main
 struct InOfficeApp: App {
-    let sharedModelContainer: ModelContainer
-    @StateObject private var locationManager: LocationManager
+    private let bootstrapResult: BootstrapResult
     
     init() {
+        SensitiveDataMigration.runIfNeeded()
+
         let schema = Schema([
             DayRecord.self,
         ])
@@ -14,17 +15,69 @@ struct InOfficeApp: App {
 
         do {
             let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
-            self.sharedModelContainer = container
-            self._locationManager = StateObject(wrappedValue: LocationManager(modelContainer: container))
+            self.bootstrapResult = .ready(container: container, launchAlert: nil)
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            AppDiagnostics.error("Model container initialization failed", error: error)
+            self.bootstrapResult = .failed(alert: AppUserFeedback.appStorageUnavailable)
         }
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView(locationManager: locationManager)
+            switch bootstrapResult {
+            case .ready(let container, let launchAlert):
+                ConfiguredAppView(
+                    container: container,
+                    launchAlert: launchAlert
+                )
+
+            case .failed(let alert):
+                AppLaunchFailureView(alert: alert)
+            }
         }
-        .modelContainer(sharedModelContainer)
+    }
+}
+
+private enum BootstrapResult {
+    case ready(container: ModelContainer, launchAlert: AppAlertInfo?)
+    case failed(alert: AppAlertInfo)
+}
+
+private struct ConfiguredAppView: View {
+    let container: ModelContainer
+    @State private var activeAlert: AppAlertInfo?
+    @StateObject private var locationManager: LocationManager
+    @State private var goalManager: GoalManager
+
+    init(container: ModelContainer, launchAlert: AppAlertInfo?) {
+        self.container = container
+        self._activeAlert = State(initialValue: launchAlert)
+        self._locationManager = StateObject(wrappedValue: LocationManager(modelContainer: container))
+        self._goalManager = State(initialValue: GoalManager())
+    }
+
+    var body: some View {
+        ContentView(locationManager: locationManager)
+            .modelContainer(container)
+            .environment(goalManager)
+            .alert(item: $activeAlert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+    }
+}
+
+private struct AppLaunchFailureView: View {
+    let alert: AppAlertInfo
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(alert.title, systemImage: "externaldrive.badge.exclamationmark")
+        } description: {
+            Text(alert.message)
+        }
     }
 }

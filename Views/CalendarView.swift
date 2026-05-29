@@ -2,6 +2,9 @@ import SwiftUI
 import SwiftData
 
 struct CalendarView: View {
+    @Environment(AppNavigationState.self) private var navigationState
+    @Query private var anyRecords: [DayRecord]
+
     @State private var displayedMonth = Date()
     @State private var selectedDate: Date? = nil
     @State private var showingStatusPicker = false
@@ -10,6 +13,19 @@ struct CalendarView: View {
     private let calendar = Calendar.current
     private let daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+    private static let monthYearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter
+    }()
+
+    init() {
+        var descriptor = FetchDescriptor<DayRecord>(
+            sortBy: [SortDescriptor(\DayRecord.date, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        _anyRecords = Query(descriptor)
+    }
     
     var body: some View {
         NavigationView {
@@ -17,6 +33,11 @@ struct CalendarView: View {
                 VStack(spacing: 24) {
                     // Month navigation header
                     monthHeader
+
+                    if anyRecords.isEmpty {
+                        calendarEmptyState
+                            .padding(.horizontal)
+                    }
                     
                     // Calendar Card & Legend & Data Wrapper
                     CalendarMonthDataView(
@@ -24,6 +45,7 @@ struct CalendarView: View {
                         selectedDate: $selectedDate,
                         showingStatusPicker: $showingStatusPicker,
                         batchManager: batchManager,
+                        showsMonthlySummary: !anyRecords.isEmpty,
                         daysOfWeek: daysOfWeek,
                         columns: columns
                     )
@@ -67,6 +89,23 @@ struct CalendarView: View {
                     CalendarBatchEditPanel(batchManager: batchManager)
                 }
             }
+        }
+        .onChange(of: navigationState.pendingCalendarEntryDate, initial: true) { _, pendingDate in
+            presentEntry(for: pendingDate)
+        }
+    }
+
+    private var calendarEmptyState: some View {
+        EmptyStateCard(
+            icon: "calendar.badge.plus",
+            title: "Your daily log belongs here",
+            message: "Mark today as in office, remote, PTO, or holiday to start building your attendance history.",
+            buttonTitle: "Log Today",
+            buttonSystemImage: "plus.circle.fill",
+            tint: DayStatus.inOffice.color
+        ) {
+            AppHaptics.selection()
+            presentEntry(for: Date())
         }
     }
     
@@ -127,13 +166,21 @@ struct CalendarView: View {
     private func changeMonth(by value: Int) {
         if let newMonth = calendar.date(byAdding: .month, value: value, to: displayedMonth) {
             displayedMonth = newMonth
+            AppHaptics.selection()
         }
     }
     
     private func monthYearString(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
-        return formatter.string(from: date)
+        Self.monthYearFormatter.string(from: date)
+    }
+
+    private func presentEntry(for date: Date?) {
+        guard let date else { return }
+
+        displayedMonth = date
+        selectedDate = date
+        showingStatusPicker = true
+        navigationState.clearPendingCalendarEntry()
     }
 }
 
@@ -144,26 +191,30 @@ struct CalendarMonthDataView: View {
     @Binding var selectedDate: Date?
     @Binding var showingStatusPicker: Bool
     var batchManager: CalendarBatchEditManager
+    let showsMonthlySummary: Bool
     
     let daysOfWeek: [String]
     let columns: [GridItem]
     
-    @Environment(\.modelContext) private var modelContext
     @Query private var records: [DayRecord]
     
     private let calendar = Calendar.current
     
-    init(displayedMonth: Date, selectedDate: Binding<Date?>, showingStatusPicker: Binding<Bool>, batchManager: CalendarBatchEditManager, daysOfWeek: [String], columns: [GridItem]) {
+    init(displayedMonth: Date, selectedDate: Binding<Date?>, showingStatusPicker: Binding<Bool>, batchManager: CalendarBatchEditManager, showsMonthlySummary: Bool, daysOfWeek: [String], columns: [GridItem]) {
         self.displayedMonth = displayedMonth
         self._selectedDate = selectedDate
         self._showingStatusPicker = showingStatusPicker
         self.batchManager = batchManager
+        self.showsMonthlySummary = showsMonthlySummary
         self.daysOfWeek = daysOfWeek
         self.columns = columns
         
         let cal = Calendar.current
-        let startOfMonth = cal.date(from: cal.dateComponents([.year, .month], from: displayedMonth))!
-        let startOfNextMonth = cal.date(byAdding: .month, value: 1, to: startOfMonth)!
+        let monthInterval = cal.dateInterval(of: .month, for: displayedMonth)
+        let startOfMonth = monthInterval?.start ?? cal.startOfDay(for: displayedMonth)
+        let startOfNextMonth = monthInterval?.end
+            ?? cal.date(byAdding: .month, value: 1, to: startOfMonth)
+            ?? startOfMonth
         
         // Dynamically bounding the Query strictly to the displayed month!
         _records = Query(
@@ -176,6 +227,8 @@ struct CalendarMonthDataView: View {
     }
     
     var body: some View {
+        let snapshot = CalendarMonthSnapshot(records: records, calendar: calendar)
+
         VStack(spacing: 24) {
             // Calendar Card
             VStack(spacing: 12) {
@@ -184,8 +237,10 @@ struct CalendarMonthDataView: View {
                     Button(action: {
                         if batchManager.isBatchEditMode {
                             batchManager.exitBatchMode()
+                            AppHaptics.selection()
                         } else {
                             batchManager.enterBatchMode()
+                            AppHaptics.emphasizedSelection()
                         }
                     }) {
                         Text(batchManager.isBatchEditMode ? "Cancel" : "Select")
@@ -197,7 +252,7 @@ struct CalendarMonthDataView: View {
                 }
                 
                 dayOfWeekHeader
-                calendarGrid
+                calendarGrid(snapshot: snapshot)
             }
             .padding(.vertical, 20)
             .background(
@@ -207,8 +262,10 @@ struct CalendarMonthDataView: View {
             )
             .padding(.horizontal)
             
-            // Color legend
-            colorLegend
+            if showsMonthlySummary {
+                // Color legend
+                colorLegend(snapshot: snapshot)
+            }
         }
         // Sheet has been intentionally moved to the root NavigationView in CalendarView.
     }
@@ -228,7 +285,7 @@ struct CalendarMonthDataView: View {
         .padding(.bottom, 8)
     }
     
-    private var calendarGrid: some View {
+    private func calendarGrid(snapshot: CalendarMonthSnapshot) -> some View {
         let days = daysInMonth()
         
         return LazyVGrid(columns: columns, spacing: 4) {
@@ -240,17 +297,18 @@ struct CalendarMonthDataView: View {
             
             // Day cells
             ForEach(days, id: \.self) { date in
-                dayCellView(for: date)
+                dayCellView(for: date, snapshot: snapshot)
             }
         }
         .padding(.horizontal, 8)
     }
     
-    private func dayCellView(for date: Date) -> some View {
-        let status = statusFor(date: date)
+    private func dayCellView(for date: Date, snapshot: CalendarMonthSnapshot) -> some View {
+        let normalizedDate = calendar.startOfDay(for: date)
+        let status = snapshot.status(for: normalizedDate)
         let isToday = calendar.isDateInToday(date)
-        let isSelected = selectedDate != nil && calendar.isDate(date, inSameDayAs: selectedDate!)
-        let isBatchSelected = batchManager.isBatchEditMode && batchManager.selectedDates.contains(calendar.startOfDay(for: date))
+        let isSelected = selectedDate.map { calendar.isDate(date, inSameDayAs: $0) } ?? false
+        let isBatchSelected = batchManager.isBatchEditMode && batchManager.selectedDates.contains(normalizedDate)
         
         return ZStack {
             // Background: soft gray for empty, solid color for status
@@ -293,20 +351,22 @@ struct CalendarMonthDataView: View {
         .onTapGesture {
             if batchManager.isBatchEditMode {
                 batchManager.toggleSelection(for: date)
+                AppHaptics.selection()
             } else {
                 selectedDate = date
                 showingStatusPicker = true
+                AppHaptics.selection()
             }
         }
         .onLongPressGesture(minimumDuration: 0.4) {
             if !batchManager.isBatchEditMode {
                 batchManager.enterBatchMode(initialDate: date)
+                AppHaptics.emphasizedSelection()
             }
         }
     }
     
-    private var colorLegend: some View {
-        let monthDays = daysInMonth()
+    private func colorLegend(snapshot: CalendarMonthSnapshot) -> some View {
         let legendColumns = [GridItem(.adaptive(minimum: 140, maximum: .infinity), spacing: 16)]
         
         return VStack(spacing: 16) {
@@ -316,7 +376,7 @@ struct CalendarMonthDataView: View {
             
             LazyVGrid(columns: legendColumns, alignment: .leading, spacing: 16) {
                 ForEach(DayStatus.selectable) { status in
-                    let count = monthDays.filter { statusFor(date: $0) == status }.count
+                    let count = snapshot.count(for: status)
                     HStack(spacing: 12) {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(status.color.gradient)
@@ -346,41 +406,6 @@ struct CalendarMonthDataView: View {
         .padding(.horizontal)
     }
     
-
-    // MARK: - Helper Methods
-    
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .long
-        return formatter.string(from: date)
-    }
-    
-    private func statusFor(date: Date) -> DayStatus {
-        if let record = records.first(where: { calendar.isDate($0.date, inSameDayAs: date) }) {
-            return record.status
-        }
-        return .none
-    }
-    
-    private func saveEntry(date: Date, status: DayStatus) {
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        guard let dayDate = calendar.date(from: components) else { return }
-        
-        // Remove existing record for that day
-        if let existing = records.first(where: { calendar.isDate($0.date, inSameDayAs: dayDate) }) {
-            modelContext.delete(existing)
-        }
-        
-        let newRecord = DayRecord(date: dayDate, status: status, isAutoDetected: false)
-        modelContext.insert(newRecord)
-    }
-    
-    private func clearEntry(date: Date) {
-        if let existing = records.first(where: { calendar.isDate($0.date, inSameDayAs: date) }) {
-            modelContext.delete(existing)
-        }
-    }
-    
     private func daysInMonth() -> [Date] {
         guard let range = calendar.range(of: .day, in: .month, for: displayedMonth),
               let firstOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: displayedMonth))
@@ -398,6 +423,38 @@ struct CalendarMonthDataView: View {
     }
 }
 
+struct CalendarMonthSnapshot {
+    private let statusByDay: [Date: DayStatus]
+    private let countsByStatus: [DayStatus: Int]
+
+    init(records: [DayRecord], calendar: Calendar) {
+        var dayMap: [Date: DayStatus] = [:]
+        dayMap.reserveCapacity(records.count)
+
+        var counts: [DayStatus: Int] = [.inOffice: 0, .remote: 0, .pto: 0, .holiday: 0]
+
+        for record in records {
+            let day = calendar.startOfDay(for: record.date)
+            let status = record.status
+            dayMap[day] = status
+            if status != .none {
+                counts[status, default: 0] += 1
+            }
+        }
+
+        self.statusByDay = dayMap
+        self.countsByStatus = counts
+    }
+
+    func status(for day: Date) -> DayStatus {
+        statusByDay[day] ?? .none
+    }
+
+    func count(for status: DayStatus) -> Int {
+        countsByStatus[status] ?? 0
+    }
+}
+
 // MARK: - DayStatusPickerSheet
 // Standalone sheet view with its own @Query so it can live on the root NavigationView
 // without depending on CalendarMonthDataView's state or modelContext.
@@ -408,8 +465,14 @@ struct DayStatusPickerSheet: View {
 
     @Environment(\.modelContext) private var modelContext
     @Query private var records: [DayRecord]
+    @State private var activeAlert: AppAlertInfo?
 
     private let calendar = Calendar.current
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        return formatter
+    }()
 
     init(date: Date, isPresented: Binding<Bool>) {
         self.date = date
@@ -417,7 +480,7 @@ struct DayStatusPickerSheet: View {
 
         // Query only records that fall on this specific day.
         let start = Calendar.current.startOfDay(for: date)
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
         _records = Query(
             filter: #Predicate<DayRecord> { record in
                 record.date >= start && record.date < end
@@ -434,8 +497,14 @@ struct DayStatusPickerSheet: View {
             VStack(spacing: 20) {
                 ForEach(DayStatus.selectable) { status in
                     Button(action: {
-                        save(status: status)
-                        isPresented = false
+                        switch save(status: status) {
+                        case .success:
+                            AppHaptics.success()
+                            isPresented = false
+                        case .failure(let alert):
+                            activeAlert = alert
+                            AppHaptics.error()
+                        }
                     }) {
                         HStack {
                             Image(systemName: status.icon)
@@ -457,8 +526,14 @@ struct DayStatusPickerSheet: View {
                 }
 
                 Button(action: {
-                    clear()
-                    isPresented = false
+                    switch clear() {
+                    case .success:
+                        AppHaptics.success()
+                        isPresented = false
+                    case .failure(let alert):
+                        activeAlert = alert
+                        AppHaptics.error()
+                    }
                 }) {
                     HStack {
                         Image(systemName: "xmark.circle")
@@ -481,23 +556,46 @@ struct DayStatusPickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium])
+        .alert(item: $activeAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
-    private func save(status: DayStatus) {
+    private func save(status: DayStatus) -> Result<Void, AppAlertInfo> {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
-        guard let dayDate = calendar.date(from: components) else { return }
+        guard let dayDate = calendar.date(from: components) else {
+            return .failure(AppUserFeedback.daySaveUnavailable)
+        }
         records.forEach { modelContext.delete($0) }
         modelContext.insert(DayRecord(date: dayDate, status: status, isAutoDetected: false))
+
+        do {
+            try modelContext.save()
+            return .success(())
+        } catch {
+            AppDiagnostics.error("Day status save failed", error: error)
+            return .failure(AppUserFeedback.daySaveUnavailable)
+        }
     }
 
-    private func clear() {
+    private func clear() -> Result<Void, AppAlertInfo> {
         records.forEach { modelContext.delete($0) }
+
+        do {
+            try modelContext.save()
+            return .success(())
+        } catch {
+            AppDiagnostics.error("Day status clear failed", error: error)
+            return .failure(AppUserFeedback.daySaveUnavailable)
+        }
     }
 
     private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .long
-        return formatter.string(from: date)
+        Self.dayFormatter.string(from: date)
     }
 }
 
@@ -505,6 +603,7 @@ struct DayStatusPickerSheet: View {
 struct CalendarBatchEditPanel: View {
     var batchManager: CalendarBatchEditManager
     @Environment(\.modelContext) private var modelContext
+    @State private var activeAlert: AppAlertInfo?
     
     var body: some View {
         VStack(spacing: 16) {
@@ -512,7 +611,10 @@ struct CalendarBatchEditPanel: View {
                 Text("\(batchManager.selectedDates.count) Selected")
                     .font(.headline)
                 Spacer()
-                Button(action: { batchManager.exitBatchMode() }) {
+                Button(action: {
+                    batchManager.exitBatchMode()
+                    AppHaptics.selection()
+                }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)
                         .foregroundColor(.gray)
@@ -523,7 +625,13 @@ struct CalendarBatchEditPanel: View {
                 HStack(spacing: 12) {
                     ForEach(DayStatus.selectable) { status in
                         Button(action: {
-                            batchManager.applyStatus(status, context: modelContext)
+                            switch batchManager.applyStatus(status, context: modelContext) {
+                            case .success:
+                                AppHaptics.success()
+                            case .failure(let alert):
+                                activeAlert = alert
+                                AppHaptics.error()
+                            }
                         }) {
                             VStack(spacing: 4) {
                                 Image(systemName: status.icon)
@@ -536,10 +644,17 @@ struct CalendarBatchEditPanel: View {
                             .foregroundColor(.white)
                             .cornerRadius(12)
                         }
+                        .disabled(batchManager.selectedDates.isEmpty)
                     }
                     
                     Button(action: {
-                        batchManager.applyStatus(.none, context: modelContext)
+                        switch batchManager.applyStatus(.none, context: modelContext) {
+                        case .success:
+                            AppHaptics.success()
+                        case .failure(let alert):
+                            activeAlert = alert
+                            AppHaptics.error()
+                        }
                     }) {
                         VStack(spacing: 4) {
                             Image(systemName: "xmark")
@@ -552,6 +667,7 @@ struct CalendarBatchEditPanel: View {
                         .foregroundColor(.primary)
                         .cornerRadius(12)
                     }
+                    .disabled(batchManager.selectedDates.isEmpty)
                 }
             }
         }
@@ -568,5 +684,12 @@ struct CalendarBatchEditPanel: View {
         .padding()
         .transition(.move(edge: .bottom).combined(with: .opacity))
         .animation(.spring(), value: batchManager.isBatchEditMode)
+        .alert(item: $activeAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 }
