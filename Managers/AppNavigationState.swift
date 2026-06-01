@@ -7,10 +7,15 @@ enum AppTab: Hashable {
     case settings
 }
 
+enum SettingsFocus: Hashable {
+    case backup
+}
+
 @Observable
 final class AppNavigationState {
     var selectedTab: AppTab = .dashboard
     var pendingCalendarEntryDate: Date?
+    var settingsFocus: SettingsFocus?
 
     func startFirstEntryFlow(on date: Date = Date()) {
         selectedTab = .log
@@ -19,5 +24,14 @@ final class AppNavigationState {
 
     func clearPendingCalendarEntry() {
         pendingCalendarEntryDate = nil
+    }
+
+    func showBackupExportFlow() {
+        selectedTab = .settings
+        settingsFocus = .backup
+    }
+
+    func clearSettingsFocus() {
+        settingsFocus = nil
     }
 }

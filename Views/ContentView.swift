@@ -3,7 +3,7 @@ import SwiftData
 
 struct ContentView: View {
     @ObservedObject var locationManager: LocationManager
-    @State private var navigationState = AppNavigationState()
+    @Environment(AppNavigationState.self) private var navigationState
 
     var body: some View {
         TabView(selection: Binding(
@@ -28,7 +28,6 @@ struct ContentView: View {
                     Label("Settings", systemImage: "gear")
                 }
         }
-        .environment(navigationState)
         .onAppear {
             AppHaptics.prepare()
         }
@@ -36,14 +35,15 @@ struct ContentView: View {
 }
 
 #Preview {
-    if let container = try? ModelContainer(for: DayRecord.self) {
-        ContentView(locationManager: LocationManager(modelContainer: container))
-            .modelContainer(container)
-            .environment(GoalManager())
-    } else {
-        ContentUnavailableView(
-            "Preview unavailable",
-            systemImage: "exclamationmark.triangle",
+        if let container = try? ModelContainer(for: DayRecord.self) {
+            ContentView(locationManager: LocationManager(modelContainer: container))
+                .modelContainer(container)
+                .environment(AppNavigationState())
+                .environment(GoalManager())
+        } else {
+            ContentUnavailableView(
+                "Preview unavailable",
+                systemImage: "exclamationmark.triangle",
             description: Text("The sample data store couldn't be created.")
         )
     }

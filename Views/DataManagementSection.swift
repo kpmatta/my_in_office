@@ -6,6 +6,9 @@ struct DataManagementSection: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \DayRecord.date, order: .reverse) private var records: [DayRecord]
 
+    let showsBackupRecommendation: Bool
+    let onDismissBackupRecommendation: (() -> Void)?
+
     @State private var shareSheetItem: ExportShareItem?
     @State private var exportCleanupURL: URL?
     @State private var showingImporter = false
@@ -19,11 +22,48 @@ struct DataManagementSection: View {
         isExporting || isImporting
     }
 
+    init(
+        showsBackupRecommendation: Bool = false,
+        onDismissBackupRecommendation: (() -> Void)? = nil
+    ) {
+        self.showsBackupRecommendation = showsBackupRecommendation
+        self.onDismissBackupRecommendation = onDismissBackupRecommendation
+    }
+
     var body: some View {
         Section(
             header: Text("Data Management"),
             footer: Text("Backup or restore your attendance data. Deleting data cannot be undone.")
         ) {
+            if showsBackupRecommendation {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Label("Recommended backup", systemImage: "externaldrive.badge.icloud")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.accentColor)
+                        Spacer()
+                        if let onDismissBackupRecommendation {
+                            Button(action: onDismissBackupRecommendation) {
+                                Image(systemName: "xmark")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 24, height: 24)
+                                    .background(Color.white.opacity(0.6))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Dismiss backup recommendation")
+                        }
+                    }
+                    Text("Use Export Data to save a CSV backup to Files or iCloud Drive.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                .padding(12)
+                .background(Color.accentColor.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
             HStack {
                 Text("Total Records")
                 Spacer()
@@ -44,6 +84,17 @@ struct DataManagementSection: View {
                         Image(systemName: "square.and.arrow.up")
                     }
                     Text(isExporting ? "Preparing Backup..." : "Export Data")
+                        .fontWeight(showsBackupRecommendation ? .semibold : .regular)
+                    Spacer()
+                    if showsBackupRecommendation && !isExporting {
+                        Text("Recommended")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(.accentColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.accentColor.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                 }
             }
             .disabled(records.isEmpty || isBusy)

@@ -1,0 +1,93 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "solid" : "display-p3:0.00000,0.00765,0.12985,1.00000"
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : "plus-lighter"
+            }
+          ],
+          "fill" : "none",
+          "image-name" : "Group 5.svg",
+          "name" : "Group 5",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -196.74299999999994,
+              80.46789136244513
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "image-name" : "Group 5.svg",
+          "name" : "Group 5",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -196.74299999999994,
+              80.46789136244513
+            ]
+          }
+        },
+        {
+          "image-name" : "页面-1-2.svg",
+          "name" : "页面-1-2",
+          "opacity" : 0.67,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              52.811991870140446,
+              -342.3323376151624
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "solid" : "srgb:0.45139,0.99310,1.00000,1.00000"
+          },
+          "image-name" : "页面-1-2.svg",
+          "name" : "页面-1-2",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              52.811991870140446,
+              -342.3323376151624
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

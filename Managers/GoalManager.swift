@@ -15,31 +15,38 @@ enum GoalLockMode: String {
 @Observable
 final class GoalManager {
 
+    private let userDefaults: UserDefaults
+    private let calendar: Calendar
+
     // MARK: - Stored properties (tracked by @Observable)
     // These are real stored vars so the observation system picks up every mutation.
     // didSet handlers persist each value to UserDefaults.
 
     var weeklyGoal: Int {
-        didSet { UserDefaults.standard.set(weeklyGoal, forKey: "weeklyInOfficeGoal") }
+        didSet { userDefaults.set(weeklyGoal, forKey: "weeklyInOfficeGoal") }
     }
 
     var monthlyGoal: Int {
-        didSet { UserDefaults.standard.set(monthlyGoal, forKey: "monthlyInOfficeGoal") }
+        didSet { userDefaults.set(monthlyGoal, forKey: "monthlyInOfficeGoal") }
     }
 
     var yearlyGoal: Int {
-        didSet { UserDefaults.standard.set(yearlyGoal, forKey: "yearlyInOfficeGoal") }
+        didSet { userDefaults.set(yearlyGoal, forKey: "yearlyInOfficeGoal") }
     }
 
     var lockMode: GoalLockMode {
-        didSet { UserDefaults.standard.set(lockMode.rawValue, forKey: "goalLockMode") }
+        didSet { userDefaults.set(lockMode.rawValue, forKey: "goalLockMode") }
     }
-
-    private let calendar = Calendar.current
 
     // MARK: - Init (reads persisted values from UserDefaults)
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(
+        userDefaults: UserDefaults = .standard,
+        calendar: Calendar = .current
+    ) {
+        self.userDefaults = userDefaults
+        self.calendar = calendar
+
         let ud = userDefaults
         let storedWeekly  = ud.integer(forKey: "weeklyInOfficeGoal")
         let storedMonthly = ud.integer(forKey: "monthlyInOfficeGoal")

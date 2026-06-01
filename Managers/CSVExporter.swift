@@ -22,12 +22,10 @@ struct CSVExporter {
 
     private static func exportSnapshots(_ records: [ExportRecordSnapshot]) -> Result<URL, ExportError> {
         var csvString = "Date,Status,AutoDetected,Notes\n"
-
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+        let calendar = Calendar(identifier: .gregorian)
 
         for record in records {
-            let dateStr = formatter.string(from: record.date)
+            let dateStr = localDayString(from: record.date, calendar: calendar)
             let autoStr = record.isAutoDetected ? "true" : "false"
             let notesStr = escapedCSVField(formulaSafeNotes(from: record.notes ?? ""))
 
@@ -66,6 +64,20 @@ struct CSVExporter {
 
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
+    }
+
+    private static func localDayString(from date: Date, calendar: Calendar) -> String {
+        var calendar = calendar
+        calendar.timeZone = .current
+
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, let month = components.month, let day = components.day else {
+            // Fallback: should not happen for persisted DayRecord dates.
+            return "1970-01-01"
+        }
+
+        // YYYY-MM-DD
+        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 }
 

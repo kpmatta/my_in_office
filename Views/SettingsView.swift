@@ -5,78 +5,92 @@ import MapKit
 struct SettingsView: View {
     @ObservedObject var locationManager: LocationManager
     @Environment(GoalManager.self) private var goalManager
-
-
+    @Environment(AppNavigationState.self) private var navigationState
+    @State private var showsBackupRecommendation = false
+    @State private var backupFocusTask: Task<Void, Never>?
 
     var body: some View {
         NavigationView {
-            Form {
-                WorkplaceSettingsSection(locationManager: locationManager)
+            ScrollViewReader { proxy in
+                Form {
+                    WorkplaceSettingsSection(locationManager: locationManager)
 
-                // MARK: - In-Office Goals
-                Section(header: goalSectionHeader()) {
-                    // Yearly
-                    GoalLockRow(
-                        label: "Yearly Goal",
-                        rawValue: Binding(
-                            get: { goalManager.yearlyGoal },
-                            set: { goalManager.yearlyGoal = $0 }
-                        ),
-                        effectiveValue: goalManager.staticYearlyGoal,
-                        unit: "days",
-                        range: 0...366,
-                        isLocked: goalManager.lockMode == .yearly,
-                        isDisabled: goalManager.lockMode != .none && goalManager.lockMode != .yearly,
-                        onToggleLock: { toggleLock(.yearly) }
-                    )
+                    // MARK: - In-Office Goals
+                    Section(header: goalSectionHeader()) {
+                        // Yearly
+                        GoalLockRow(
+                            label: "Yearly Goal",
+                            rawValue: Binding(
+                                get: { goalManager.yearlyGoal },
+                                set: { goalManager.yearlyGoal = $0 }
+                            ),
+                            effectiveValue: goalManager.staticYearlyGoal,
+                            unit: "days",
+                            range: 0...366,
+                            isLocked: goalManager.lockMode == .yearly,
+                            isDisabled: goalManager.lockMode != .none && goalManager.lockMode != .yearly,
+                            onToggleLock: { toggleLock(.yearly) }
+                        )
 
-                    // Monthly
-                    GoalLockRow(
-                        label: "Monthly Goal",
-                        rawValue: Binding(
-                            get: { goalManager.monthlyGoal },
-                            set: { goalManager.monthlyGoal = $0 }
-                        ),
-                        effectiveValue: goalManager.staticMonthlyGoal,
-                        unit: "days",
-                        range: 0...31,
-                        isLocked: goalManager.lockMode == .monthly,
-                        isDisabled: goalManager.lockMode != .none && goalManager.lockMode != .monthly,
-                        onToggleLock: { toggleLock(.monthly) }
-                    )
+                        // Monthly
+                        GoalLockRow(
+                            label: "Monthly Goal",
+                            rawValue: Binding(
+                                get: { goalManager.monthlyGoal },
+                                set: { goalManager.monthlyGoal = $0 }
+                            ),
+                            effectiveValue: goalManager.staticMonthlyGoal,
+                            unit: "days",
+                            range: 0...31,
+                            isLocked: goalManager.lockMode == .monthly,
+                            isDisabled: goalManager.lockMode != .none && goalManager.lockMode != .monthly,
+                            onToggleLock: { toggleLock(.monthly) }
+                        )
 
-                    // Weekly
-                    GoalLockRow(
-                        label: "Weekly Goal",
-                        rawValue: Binding(
-                            get: { goalManager.weeklyGoal },
-                            set: { goalManager.weeklyGoal = $0 }
-                        ),
-                        effectiveValue: goalManager.staticWeeklyGoal,
-                        unit: "days",
-                        range: 0...7,
-                        isLocked: goalManager.lockMode == .weekly,
-                        isDisabled: goalManager.lockMode != .none && goalManager.lockMode != .weekly,
-                        onToggleLock: { toggleLock(.weekly) }
-                    )
+                        // Weekly
+                        GoalLockRow(
+                            label: "Weekly Goal",
+                            rawValue: Binding(
+                                get: { goalManager.weeklyGoal },
+                                set: { goalManager.weeklyGoal = $0 }
+                            ),
+                            effectiveValue: goalManager.staticWeeklyGoal,
+                            unit: "days",
+                            range: 0...7,
+                            isLocked: goalManager.lockMode == .weekly,
+                            isDisabled: goalManager.lockMode != .none && goalManager.lockMode != .weekly,
+                            onToggleLock: { toggleLock(.weekly) }
+                        )
 
-                    // Mode description
-                    if goalManager.lockMode != .none {
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle")
-                                .foregroundColor(.accentColor)
-                                .font(.caption)
-                            Text(lockModeDescription)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        // Mode description
+                        if goalManager.lockMode != .none {
+                            HStack(spacing: 6) {
+                                Image(systemName: "info.circle")
+                                    .foregroundColor(.accentColor)
+                                    .font(.caption)
+                                Text(lockModeDescription)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 4)
                         }
-                        .padding(.top, 4)
                     }
+                    
+                    DataManagementSection(
+                        showsBackupRecommendation: showsBackupRecommendation,
+                        onDismissBackupRecommendation: dismissBackupRecommendation
+                    )
+                        .id(SettingsFocus.backup)
                 }
-                
-                DataManagementSection()
+                .navigationTitle("Settings")
+                .onChange(of: navigationState.settingsFocus, initial: true) { _, focus in
+                    handleSettingsFocus(focus, proxy: proxy)
+                }
             }
-            .navigationTitle("Settings")
+        }
+        .onDisappear {
+            backupFocusTask?.cancel()
+            backupFocusTask = nil
         }
     }
 
@@ -115,8 +129,31 @@ struct SettingsView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color(.systemGray5))
-                    .clipShape(Capsule())
+                .clipShape(Capsule())
             }
+        }
+    }
+
+    private func handleSettingsFocus(_ focus: SettingsFocus?, proxy: ScrollViewProxy) {
+        guard focus == .backup else { return }
+
+        backupFocusTask?.cancel()
+        navigationState.clearSettingsFocus()
+
+        backupFocusTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(SettingsFocus.backup, anchor: .center)
+                showsBackupRecommendation = true
+            }
+        }
+    }
+
+    private func dismissBackupRecommendation() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showsBackupRecommendation = false
         }
     }
 

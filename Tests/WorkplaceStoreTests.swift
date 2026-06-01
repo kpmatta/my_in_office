@@ -2,26 +2,29 @@ import XCTest
 @testable import InOffice
 
 final class WorkplaceStoreTests: XCTestCase {
-    func testMigratesLegacyDefaultsIntoKeychain() {
+    func testMigratesLegacyDefaultsIntoKeychain() throws {
         let (store, keychain, userDefaults) = makeStore()
         userDefaults.set(40.7128, forKey: "officeLatitude")
         userDefaults.set(-74.0060, forKey: "officeLongitude")
         userDefaults.set("New York Office", forKey: "officeAddress")
 
         let workplace = store.migrateLegacyValuesIfNeeded()
+        let coordinate = try XCTUnwrap(workplace.coordinate)
+        let storedLatitude = try XCTUnwrap(keychain.string(for: "office.latitude").flatMap(Double.init))
+        let storedLongitude = try XCTUnwrap(keychain.string(for: "office.longitude").flatMap(Double.init))
 
-        XCTAssertEqual(workplace.coordinate?.latitude, 40.7128, accuracy: 0.0001)
-        XCTAssertEqual(workplace.coordinate?.longitude, -74.0060, accuracy: 0.0001)
+        XCTAssertEqual(coordinate.latitude, 40.7128, accuracy: 0.0001)
+        XCTAssertEqual(coordinate.longitude, -74.0060, accuracy: 0.0001)
         XCTAssertEqual(workplace.address, "New York Office")
         XCTAssertNil(userDefaults.object(forKey: "officeLatitude"))
         XCTAssertNil(userDefaults.object(forKey: "officeLongitude"))
         XCTAssertNil(userDefaults.object(forKey: "officeAddress"))
-        XCTAssertEqual(Double(keychain.string(for: "office.latitude") ?? ""), 40.7128, accuracy: 0.0001)
-        XCTAssertEqual(Double(keychain.string(for: "office.longitude") ?? ""), -74.0060, accuracy: 0.0001)
+        XCTAssertEqual(storedLatitude, 40.7128, accuracy: 0.0001)
+        XCTAssertEqual(storedLongitude, -74.0060, accuracy: 0.0001)
         XCTAssertEqual(keychain.string(for: "office.address"), "New York Office")
     }
 
-    func testExistingKeychainValuesWinAndLegacyDefaultsAreCleared() {
+    func testExistingKeychainValuesWinAndLegacyDefaultsAreCleared() throws {
         let (store, keychain, userDefaults) = makeStore()
         _ = keychain.set("34.0522", for: "office.latitude")
         _ = keychain.set("-118.2437", for: "office.longitude")
@@ -32,9 +35,10 @@ final class WorkplaceStoreTests: XCTestCase {
         userDefaults.set("London Office", forKey: "officeAddress")
 
         let workplace = store.migrateLegacyValuesIfNeeded()
+        let coordinate = try XCTUnwrap(workplace.coordinate)
 
-        XCTAssertEqual(workplace.coordinate?.latitude, 34.0522, accuracy: 0.0001)
-        XCTAssertEqual(workplace.coordinate?.longitude, -118.2437, accuracy: 0.0001)
+        XCTAssertEqual(coordinate.latitude, 34.0522, accuracy: 0.0001)
+        XCTAssertEqual(coordinate.longitude, -118.2437, accuracy: 0.0001)
         XCTAssertEqual(workplace.address, "Los Angeles Office")
         XCTAssertNil(userDefaults.object(forKey: "officeLatitude"))
         XCTAssertNil(userDefaults.object(forKey: "officeLongitude"))
